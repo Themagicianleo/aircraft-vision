@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -142,7 +143,9 @@ def main():
             "meta": {"model": args.model, "img_size": args.img_size, "mean": mean, "std": std,
                      "classes": bundle.classes, "hierarchy": bundle.hierarchy},
         }
-        torch.save(ck, out / "last.pt")
+        # Write then rename, so a session killed mid-save (e.g. Colab limits) never leaves a corrupt checkpoint.
+        torch.save(ck, out / "last.pt.tmp")
+        os.replace(out / "last.pt.tmp", out / "last.pt")
         (out / "history.json").write_text(json.dumps(history, indent=1))
 
     print(f"Done. Checkpoint: {out / 'last.pt'}  ->  next: python export.py --checkpoint {out / 'last.pt'}")
