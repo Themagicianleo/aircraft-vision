@@ -14,6 +14,7 @@ import argparse
 import json
 import math
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -84,6 +85,7 @@ def evaluate(model, loader, device, bundle: DataBundle) -> dict[str, float]:
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)  # show progress live in Colab/Kaggle, not in big delayed chunks
     args = parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -120,7 +122,7 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         model.train()
         t0, running, seen = time.time(), 0.0, 0
-        for x, y in train_dl:
+        for step, (x, y) in enumerate(train_dl, 1):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             with torch.autocast(device.type, enabled=device.type == "cuda"):
                 loss = loss_fn(model(x), y)
@@ -131,6 +133,10 @@ def main():
             sched.step()
             running += loss.item() * len(y)
             seen += len(y)
+            if step % 50 == 0:
+                left = (time.time() - t0) / step * (len(train_dl) - step)
+                print(f"  epoch {epoch + 1}/{args.epochs}  step {step}/{len(train_dl)}  "
+                      f"loss {running / seen:.3f}  ~{left / 60:.0f} min left in this epoch")
 
         metrics = evaluate(model, val_dl, device, bundle) if bundle.val else {}
         history.append({"epoch": epoch, "loss": running / max(seen, 1), **metrics})
