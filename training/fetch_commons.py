@@ -208,7 +208,10 @@ def main():
         types = [t for t in types if t["class"] in set(args.only)]
 
     all_cats = sorted({c for t in types for c in t["categories"]})
-    missing = api.missing_categories(all_cats)
+    try:
+        missing = api.missing_categories(all_cats)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"Could not reach Wikimedia Commons ({e}). Try again later.")
     for name in sorted(missing):
         print(f"Category not found or empty: '{name}'.  Similar: {api.suggest(name) or 'none'}")
     if args.check:
@@ -227,8 +230,12 @@ def main():
         if not roots:
             print(f"{t['class']}: no valid categories, skipped")
             continue
-        files = crawl(api, roots, skip_pattern(t["exclude"]), all_roots - set(roots),
-                      want=args.per_class * 4, max_depth=args.max_depth, max_cats=args.max_categories)
+        try:
+            files = crawl(api, roots, skip_pattern(t["exclude"]), all_roots - set(roots),
+                          want=args.per_class * 4, max_depth=args.max_depth, max_cats=args.max_categories)
+        except Exception as e:  # noqa: BLE001 - one bad type shouldn't stop the others
+            print(f"{t['class']}: failed to list photos ({e}), skipped this time")
+            continue
         candidates[t["class"]] = files
         print(f"{t['class']:<12} {len(files)} candidate photos")
 
@@ -255,7 +262,11 @@ def main():
         pool = sorted(candidates[cls] - shared)
         random.Random(cls).shuffle(pool)
         pool = pool[: args.per_class]
-        info = api.image_info(pool)
+        try:
+            info = api.image_info(pool)
+        except Exception as e:  # noqa: BLE001
+            print(f"{cls}: failed to look up photos ({e}), skipped this time")
+            continue
         jobs = []
         for title in pool:
             ii = info.get(title)
