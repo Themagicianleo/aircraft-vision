@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -96,9 +96,13 @@ def prepare_fgvc(root: str | Path, short_side: int = 512, workers: int = 4) -> P
         for i in all_ids
         if not (out / "images" / f"{i}.jpg").exists()
     ]
-    print(f"Preparing {len(jobs)} images -> {out / 'images'}")
-    with ProcessPoolExecutor(workers) as pool:
-        list(pool.map(_resize_one, jobs, chunksize=64))
+    print(f"Preparing {len(jobs)} images -> {out / 'images'}", flush=True)
+    # Threads, not processes: forking worker processes can freeze inside Jupyter/Colab kernels.
+    # PIL releases the GIL while decoding/resizing, so threads are nearly as fast.
+    with ThreadPoolExecutor(workers) as pool:
+        for i, _ in enumerate(pool.map(_resize_one, jobs), 1):
+            if i % 1000 == 0 or i == len(jobs):
+                print(f"  {i}/{len(jobs)} images prepared", flush=True)
 
     meta = {"classes": variants, "hierarchy": hierarchy, "splits": splits}
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
