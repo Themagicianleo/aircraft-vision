@@ -43,6 +43,24 @@ python predict.py exported/aircraft.onnx some_photo.jpg
 
 `train.py` reports top-1 and top-5 accuracy, plus how often the family and manufacturer are right. Even when the exact variant is wrong (737-800 vs 737-900), the family is usually right.
 
+### More photos from Wikimedia Commons (done automatically in the notebook)
+
+`fetch_commons.py` downloads freely licensed photos from [Wikimedia Commons](https://commons.wikimedia.org). The types it fetches are listed in `commons_types.csv`:
+- **types FGVC lacks:** 787-8/9/10, A350-900/1000, A220-100/300, 737 MAX 8/9, A320neo, A321neo, A330-900, 747-8, 777-300ER and E195-E2
+- **common FGVC airliners:** extra, more recent photos
+
+```bash
+python fetch_commons.py --check                    # verify category names in commons_types.csv
+python fetch_commons.py --out data/commons         # ~250 photos per type; rerun to resume
+python train.py --data-root data --extra-data data/commons --out runs/effb0
+```
+
+It skips cockpit, interior, engine, model and crash photos. It also drops photos filed under two types, and keeps each type's category tree separate (A320 photos don't pick up A320neo ones).
+
+Every photo's author and licence is recorded in `data/commons/CREDITS.csv`. Most are CC BY or CC BY-SA, which require crediting the author, so keep that file with the project, especially if you publish the app.
+
+To add a type, add a row with its Commons category name (the part after `Category:` in the page URL).
+
 ### Adding your own aircraft types
 
 ```

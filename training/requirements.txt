@@ -6,3 +6,4 @@ onnxruntime>=1.19
 onnxscript
 pillow
 numpy
+requests
