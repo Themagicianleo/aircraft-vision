@@ -23,7 +23,18 @@ The default dataset is [FGVC-Aircraft](https://www.robots.ox.ac.uk/~vgg/data/fgv
 
 **It dates from 2013**, so it has no 787, A350, A220, 737 MAX or E2-jets. Add those with your own photos (see below).
 
-## 1. Train the model (free GPU on Colab)
+## 1. Train the model (free GPU on Kaggle, recommended)
+
+Kaggle runs the whole thing in the background, so you don't need to keep a browser tab open. It gives about 30 free GPU hours a week.
+
+1. Sign up at [kaggle.com](https://www.kaggle.com) and verify your phone number (Settings → Phone verification). That unlocks the GPU and internet access.
+2. **Create → New Notebook**, then **File → Import Notebook**, and paste the link
+   `https://github.com/Themagicianleo/aircraft-vision/blob/main/training/notebooks/train_kaggle.ipynb`
+3. In the right-hand panel, set **Accelerator: GPU T4 x2** and **Internet: On**.
+4. **Save Version → Save & Run All (Commit) → Save.** Close the browser if you like. It takes about 3–5 hours.
+5. Open the notebook again, go to the **Output** tab of the finished version, and download `aircraft_model.zip`.
+
+### Or on Colab
 
 Open `training/notebooks/train_colab.ipynb` in Colab (File → Open notebook → GitHub → `Themagicianleo/aircraft-vision`), select a T4 GPU and run all cells. At the end it downloads `aircraft_model.zip`.
 
