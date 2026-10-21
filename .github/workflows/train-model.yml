@@ -1,0 +1,295 @@
+# Trains the aircraft model on GitHub's free CPU runners, then builds the Android app
+# with it and publishes both on the Releases page. Fully unattended: start it from
+# Actions -> Train model -> Run workflow, and it takes about a day.
+name: Train model
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: Training rounds
+        default: "30"
+      img_size:
+        description: Image size the model sees
+        default: "256"
+      model:
+        description: Model architecture (timm name)
+        default: efficientnet_b0
+      per_class:
+        description: Max Wikimedia Commons photos per aircraft type
+        default: "250"
+      smoke:
+        description: Quick end-to-end test (tiny run, draft release)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: train-model
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PER_CLASS: ${{ inputs.smoke && '4' || inputs.per_class }}
+
+jobs:
+  data:
+    name: Download photos
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache key
+        id: key
+        run: echo "key=av-data-v1-pc${PER_CLASS}-${{ hashFiles('training/commons_types.csv', 'training/fetch_commons.py', 'training/av/data.py') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Already downloaded?
+        id: cached
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: |
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q timm requests pillow
+
+      - name: FGVC-Aircraft (100 types)
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p raw data
+          curl -fsSL --retry 5 https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/archives/fgvc-aircraft-2013b.tar.gz | tar xz -C raw
+          (cd training && python -c "from av.data import prepare_fgvc; prepare_fgvc('../raw', workers=4)") 2>&1 | tee fgvc.log
+          mv raw/fgvc_prepared data/
+          rm -rf raw
+
+      - name: Wikimedia Commons photos
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: |
+          (cd training && python fetch_commons.py --out ../data/commons --per-class "$PER_CLASS") 2>&1 | tee commons.log
+          grep "Category not found" commons.log | while read -r line; do echo "::warning title=Commons category::$line"; done || true
+          echo "::notice title=Photos::$(find data/commons -name '*.jpg' | wc -l) Wikimedia Commons photos downloaded"
+
+      - name: Store photos for the training parts
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Report error
+        if: failure()
+        run: |
+          for f in fgvc.log commons.log; do
+            [ -f "$f" ] && echo "::error title=$f::$(tail -n 25 "$f" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+          done; true
+
+  # Each part trains for up to ~5.5 hours, then hands over to the next. Parts after
+  # training has finished exit within a minute. 8 parts allow up to ~44 hours.
+  train1:
+    needs: data
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 1
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train2:
+    needs: [data, train1]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 2
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train3:
+    needs: [data, train2]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 3
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train4:
+    needs: [data, train3]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 4
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train5:
+    needs: [data, train4]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 5
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train6:
+    needs: [data, train5]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 6
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train7:
+    needs: [data, train6]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 7
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  train8:
+    needs: [data, train7]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    uses: ./.github/workflows/train-chunk.yml
+    with:
+      chunk: 8
+      data-key: ${{ needs.data.outputs.key }}
+      time-limit: ${{ inputs.smoke && 0.1 || 320 }}
+      train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
+
+  publish:
+    name: Build app and publish release
+    needs: [data, train8]
+    if: ${{ !cancelled() && needs.data.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write  # to create the release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get trained model
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint
+          path: run
+
+      - name: Check training finished
+        run: |
+          python3 -c "import json,sys; s=json.load(open('run/status.json')); sys.exit(0 if s['finished'] else 1)" || {
+            echo "::error title=Training not finished::Training ran out of parts before finishing. Re-run this workflow; it continues from the saved checkpoint."; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q timm onnx onnxruntime onnxscript requests pillow
+
+      - name: Restore photos
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: ${{ needs.data.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Export and measure accuracy
+        working-directory: training
+        run: |
+          extra=""; [ -d ../data/commons/train ] && extra="--extra-data ../data/commons"
+          {
+            python export.py --checkpoint ../run/last.pt --out ../exported --int8 --calib-dir ../data/fgvc_prepared/images
+            python evaluate.py --onnx ../exported/aircraft.onnx --data-root ../data $extra --json ../exported/fp32.json
+            python evaluate.py --onnx ../exported/aircraft_int8.onnx --labels ../exported/labels.json --data-root ../data $extra --json ../exported/int8.json
+          } 2>&1 | tee ../export.log
+
+      - name: Pick model and write release notes
+        run: |
+          python3 - <<'EOF'
+          import json, shutil
+          fp32, int8 = (json.load(open(f"exported/{n}.json")) for n in ("fp32", "int8"))
+          use_int8 = int8["top1"] >= fp32["top1"] - 0.01  # 4x smaller if it costs <1 point of accuracy
+          m = int8 if use_int8 else fp32
+          shutil.copy("exported/aircraft_int8.onnx" if use_int8 else "exported/aircraft.onnx", "android/app/src/main/assets/aircraft.onnx")
+          shutil.copy("exported/labels.json", "android/app/src/main/assets/labels.json")
+          labels = json.load(open("exported/labels.json"))
+          names = sorted(c["name"] for c in labels["classes"])
+          notes = f"""## Install on Android
+          1. On your phone, tap **AircraftVision.apk** below to download it.
+          2. Open the downloaded file. If Android asks, allow installing apps from your browser.
+          3. If it says the app can't be installed over an existing one, uninstall the old Aircraft Vision first.
+
+          ## This model
+          - Recognises **{len(names)} aircraft types**
+          - Exact type right: **{m['top1']:.1%}** of test photos (right type in top 5: {m['top5']:.1%})
+          - Right family (e.g. "Boeing 737"): **{m['family']:.1%}**, right manufacturer: {m['manufacturer']:.1%}
+          - Tested on {m['images']} photos it never saw during training. Runs fully on the phone ({'int8' if use_int8 else 'fp32'} model)
+
+          <details><summary>All types</summary>
+
+          {', '.join(names)}
+          </details>
+
+          `aircraft_model.zip` holds the model files (also usable for an iOS app) and photo credits.
+          """
+          open("release_notes.md", "w").write(notes)
+          print(f"::notice title=Accuracy::{m['top1']:.1%} exact type, {m['family']:.1%} family, {len(names)} types")
+          EOF
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build app
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug 2>&1 | tee ../build.log
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p pkg
+          cp android/app/src/main/assets/aircraft.onnx android/app/src/main/assets/labels.json pkg/
+          [ -f data/commons/CREDITS.csv ] && cp data/commons/CREDITS.csv pkg/PHOTO_CREDITS.csv
+          (cd pkg && zip -q ../aircraft_model.zip *)
+          cp android/app/build/outputs/apk/debug/app-debug.apk AircraftVision.apk
+          tag="model-${{ github.run_number }}${{ inputs.smoke && '-smoke' || '' }}"
+          gh release create "$tag" AircraftVision.apk aircraft_model.zip --target "$GITHUB_SHA" \
+            --title "Aircraft Vision (model #${{ github.run_number }})" --notes-file release_notes.md \
+            ${{ inputs.smoke && '--draft' || '--latest' }}
+          echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag"
+
+      - name: Report error
+        if: failure()
+        run: |
+          for f in export.log build.log; do
+            [ -f "$f" ] && echo "::error title=$f::$(tail -n 25 "$f" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+          done; true

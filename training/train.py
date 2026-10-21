@@ -46,6 +46,9 @@ def parse_args():
     p.add_argument("--limit", type=int, default=0, help="debug: cap train/val items")
     p.add_argument("--out", default="runs/exp")
     p.add_argument("--resume", action="store_true", help="continue from <out>/last.pt")
+    p.add_argument("--time-limit-min", type=float, default=0,
+                   help="stop cleanly (checkpoint saved) before this many minutes; rerun with --resume to continue")
+    p.add_argument("--eval-every", type=int, default=1, help="evaluate every N epochs (always on the last)")
     return p.parse_args()
 
 
@@ -119,7 +122,11 @@ def main():
         start_epoch, history = ck["epoch"] + 1, ck["history"]
         print(f"Resumed at epoch {start_epoch}")
 
+    started, slowest_epoch = time.time(), 0.0
     for epoch in range(start_epoch, args.epochs):
+        if args.time_limit_min and time.time() - started + slowest_epoch > args.time_limit_min * 60:
+            print(f"Time budget used: stopping after {epoch} of {args.epochs} epochs. Rerun with --resume to continue.")
+            break
         model.train()
         t0, running, seen = time.time(), 0.0, 0
         for step, (x, y) in enumerate(train_dl, 1):
@@ -138,7 +145,8 @@ def main():
                 print(f"  epoch {epoch + 1}/{args.epochs}  step {step}/{len(train_dl)}  "
                       f"loss {running / seen:.3f}  ~{left / 60:.0f} min left in this epoch")
 
-        metrics = evaluate(model, val_dl, device, bundle) if bundle.val else {}
+        last = epoch == args.epochs - 1
+        metrics = evaluate(model, val_dl, device, bundle) if bundle.val and (last or (epoch + 1) % args.eval_every == 0) else {}
         history.append({"epoch": epoch, "loss": running / max(seen, 1), **metrics})
         print(f"epoch {epoch + 1}/{args.epochs}  loss {running / max(seen, 1):.3f}  "
               + "  ".join(f"{k} {v:.3f}" for k, v in metrics.items()) + f"  ({time.time() - t0:.0f}s)")
@@ -153,7 +161,14 @@ def main():
         torch.save(ck, out / "last.pt.tmp")
         os.replace(out / "last.pt.tmp", out / "last.pt")
         (out / "history.json").write_text(json.dumps(history, indent=1))
+        slowest_epoch = max(slowest_epoch, time.time() - t0)
 
+    done = len(history) >= args.epochs
+    (out / "status.json").write_text(json.dumps({
+        "epochs_done": len(history), "epochs_total": args.epochs, "finished": done,
+        "last_metrics": next((h for h in reversed(history) if "top1" in h), None)}, indent=1))
+    if not done:
+        return
     print(f"Done. Checkpoint: {out / 'last.pt'}  ->  next: python export.py --checkpoint {out / 'last.pt'}")
 
 

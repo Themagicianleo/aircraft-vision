@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -25,6 +27,7 @@ def main():
     p.add_argument("--val-split", default="test", choices=["val", "test"])
     p.add_argument("--extra-data", nargs="*", default=[])
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--json", help="also write the metrics to this file")
     args = p.parse_args()
 
     clf = OnnxClassifier(args.onnx, args.labels)
@@ -51,6 +54,9 @@ def main():
         fam_ok += fam[pred] == fam[truth]
         man_ok += man[pred] == man[truth]
     n = max(len(items), 1)
+    if args.json:
+        Path(args.json).write_text(json.dumps({"images": len(items), "top1": top1 / n, "top5": top5 / n,
+                                               "family": fam_ok / n, "manufacturer": man_ok / n}, indent=1))
     print(f"{len(items)} images  top1 {top1 / n:.3f}  top5 {top5 / n:.3f}  family {fam_ok / n:.3f}  "
           f"manufacturer {man_ok / n:.3f}  ({1000 * (time.time() - t0) / n:.0f} ms/image incl. decode)")
 

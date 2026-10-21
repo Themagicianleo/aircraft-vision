@@ -1,0 +1,103 @@
+# One ~5.5 hour slice of training, called repeatedly by train-model.yml.
+# Each slice continues from the checkpoint the previous slice uploaded.
+name: Train chunk
+
+on:
+  workflow_call:
+    inputs:
+      chunk:
+        type: number
+        required: true
+      data-key:
+        type: string
+        required: true
+      train-args:
+        type: string
+        required: true
+      time-limit:
+        description: minutes of training before saving and handing over to the next slice
+        type: number
+        default: 320
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  train:
+    name: Train (part ${{ inputs.chunk }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get checkpoint from the previous part
+        uses: actions/download-artifact@v4
+        continue-on-error: true  # the first part has none
+        with:
+          name: checkpoint
+          path: run
+
+      - name: Check whether training already finished
+        id: status
+        run: |
+          if [ -f run/status.json ] && python3 -c "import json,sys; sys.exit(0 if json.load(open('run/status.json'))['finished'] else 1)"; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Training::Already finished in an earlier part; nothing to do."
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.status.outputs.done != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        if: steps.status.outputs.done != 'true'
+        run: |
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q timm onnx onnxruntime onnxscript requests pillow
+
+      - name: Restore photos
+        if: steps.status.outputs.done != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: ${{ inputs.data-key }}
+          fail-on-cache-miss: true
+
+      - name: Train
+        if: steps.status.outputs.done != 'true'
+        working-directory: training
+        run: |
+          extra=""; [ -d ../data/commons/train ] && extra="--extra-data ../data/commons"
+          python train.py --data-root ../data $extra --out ../run --resume \
+            --time-limit-min ${{ inputs.time-limit }} ${{ inputs.train-args }} 2>&1 | tee ../train.log
+
+      - name: Report progress
+        if: always() && steps.status.outputs.done != 'true'
+        run: |
+          [ -f run/status.json ] || exit 0
+          python3 - <<'EOF'
+          import json
+          s = json.load(open("run/status.json"))
+          m = s["last_metrics"] or {}
+          acc = f"{m['top1']:.1%} exact type, {m['family']:.1%} family" if m else "not measured yet"
+          print(f"::notice title=Training progress::{s['epochs_done']}/{s['epochs_total']} rounds done. Accuracy: {acc}.")
+          EOF
+
+      - name: Save checkpoint for the next part
+        if: always() && steps.status.outputs.done != 'true' && hashFiles('run/last.pt') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint
+          path: run/
+          overwrite: true
+          retention-days: 14
+
+      - name: Report error
+        if: failure()
+        run: |
+          [ -f train.log ] || exit 0
+          echo "::error title=Training failed::$(tail -n 25 train.log | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
