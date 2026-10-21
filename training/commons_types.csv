@@ -6,6 +6,7 @@ class,family,manufacturer,categories,exclude
 # Lines starting with # are ignored. Run `python fetch_commons.py --check` to verify category names.
 #
 # --- Types missing from FGVC-Aircraft ---
+# ("E-Jet E2" covers the E190-E2 and E195-E2: Commons files them together.)
 787-8,Boeing 787,Boeing,Boeing 787-8,
 787-9,Boeing 787,Boeing,Boeing 787-9,
 787-10,Boeing 787,Boeing,Boeing 787-10,
@@ -13,14 +14,14 @@ A350-900,A350,Airbus,Airbus A350-900,
 A350-1000,A350,Airbus,Airbus A350-1000,
 A220-100,A220,Airbus,Airbus A220-100;Bombardier CS100,
 A220-300,A220,Airbus,Airbus A220-300;Bombardier CS300,
-737 MAX 8,Boeing 737,Boeing,Boeing 737 MAX 8,
-737 MAX 9,Boeing 737,Boeing,Boeing 737 MAX 9,
+737 MAX 8,Boeing 737,Boeing,Boeing 737-8 MAX,
+737 MAX 9,Boeing 737,Boeing,Boeing 737-9 MAX,
 A320neo,A320,Airbus,Airbus A320neo,
 A321neo,A320,Airbus,Airbus A321neo,
-A330-900,A330,Airbus,Airbus A330-900,
-747-8,Boeing 747,Boeing,Boeing 747-8;Boeing 747-8I;Boeing 747-8F,
+A330-900,A330,Airbus,Airbus A330neo,800
+747-8,Boeing 747,Boeing,Boeing 747-8;Boeing 747-8F,
 777-300ER,Boeing 777,Boeing,Boeing 777-300ER,
-E195-E2,Embraer E-Jet,Embraer,Embraer E195-E2,
+E-Jet E2,Embraer E-Jet,Embraer,Embraer E-Jets E2,
 #
 # --- More, newer photos for common FGVC types ---
 A319,A320,Airbus,Airbus A319,neo
@@ -41,4 +42,4 @@ E-190,Embraer E-Jet,Embraer,Embraer 190,E2
 E-195,Embraer E-Jet,Embraer,Embraer 195,E2
 CRJ-900,CRJ-700,Canadair,Bombardier CRJ900,
 ATR-72,ATR-72,ATR,ATR 72,
-DHC-8-300,Dash 8,de Havilland,Bombardier Dash 8 Q300;De Havilland Canada Dash 8-300,
+DHC-8-300,Dash 8,de Havilland,De Havilland Canada DHC-8-300,
