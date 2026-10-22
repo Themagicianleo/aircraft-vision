@@ -27,10 +27,17 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,7 +92,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -100,7 +106,6 @@ import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.PI
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
@@ -142,7 +147,7 @@ private fun AircraftApp(viewModel: MainViewModel) {
 
     val showingResult = state.image != null || state.busy || state.predictions.isNotEmpty()
     if (showingResult) {
-        ResultScreen(state, onClose = viewModel::clear)
+        ResultScreen(state, onClose = viewModel::clear, onCrop = viewModel::onCrop)
     } else {
         CameraScreen(
             error = state.error,
@@ -266,24 +271,22 @@ private fun CameraScreen(error: String?, onCapture: (Bitmap) -> Unit, onGallery:
 private fun Viewfinder(modifier: Modifier) {
     Canvas(modifier) {
         val side = min(size.width, size.height) * 0.82f
-        drawCornerBrackets(Offset((size.width - side) / 2, (size.height - side) / 2), side, Color.White)
+        drawCornerBrackets(Rect(Offset((size.width - side) / 2, (size.height - side) / 2), Size(side, side)), Color.White)
     }
 }
 
-private fun DrawScope.drawCornerBrackets(topLeft: Offset, side: Float, color: Color) {
-    val arm = side * 0.14f
+private fun DrawScope.drawCornerBrackets(box: Rect, color: Color) {
+    val short = min(box.width, box.height)
+    val arm = short * 0.18f
+    val r = short * 0.07f  // corner radius
     val stroke = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-    val r = side * 0.06f  // corner radius
-    val (l, t) = topLeft
-    val rgt = l + side
-    val btm = t + side
     // Each bracket: a quarter-circle corner with two short straight arms.
     data class Corner(val cx: Float, val cy: Float, val start: Float, val dx: Float, val dy: Float)
     listOf(
-        Corner(l + r, t + r, 180f, 1f, 1f), Corner(rgt - r, t + r, 270f, -1f, 1f),
-        Corner(rgt - r, btm - r, 0f, -1f, -1f), Corner(l + r, btm - r, 90f, 1f, -1f),
+        Corner(box.left + r, box.top + r, 180f, 1f, 1f), Corner(box.right - r, box.top + r, 270f, -1f, 1f),
+        Corner(box.right - r, box.bottom - r, 0f, -1f, -1f), Corner(box.left + r, box.bottom - r, 90f, 1f, -1f),
     ).forEach { c ->
-        drawArc(color, c.start, 90f, false, Offset(c.cx - r, c.cy - r), androidx.compose.ui.geometry.Size(2 * r, 2 * r), style = stroke)
+        drawArc(color, c.start, 90f, false, Offset(c.cx - r, c.cy - r), Size(2 * r, 2 * r), style = stroke)
         val ex = c.cx - c.dx * r  // x of the vertical edge
         val ey = c.cy - c.dy * r  // y of the horizontal edge
         drawLine(color, Offset(c.cx, ey), Offset(c.cx + c.dx * (arm - r), ey), stroke.width, StrokeCap.Round)
@@ -349,19 +352,23 @@ private fun NoCameraPermission(onAllow: () -> Unit, onSettings: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ResultScreen(state: UiState, onClose: () -> Unit) {
+private fun ResultScreen(state: UiState, onClose: () -> Unit, onCrop: (CropBox) -> Unit) {
     BackHandler(onBack = onClose)
-    val peek = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
+    val peek = (LocalConfiguration.current.screenHeightDp * 0.4f).dp
     BottomSheetScaffold(
         scaffoldState = rememberBottomSheetScaffoldState(),
         sheetPeekHeight = peek,
         sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         sheetContainerColor = MaterialTheme.colorScheme.surface,
         containerColor = Color.Black,
-        sheetContent = { SheetContent(state, onRetake = onClose) },
+        sheetContent = { SheetContent(state, onRetake = onClose, onCrop = onCrop) },
     ) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            state.image?.let { FrozenPhoto(it, analysing = state.busy, bottomInset = peek - 24.dp) }
+            val image = state.image
+            val crop = state.crop
+            if (image != null && crop != null) {
+                CropEditor(image, crop, analysing = state.busy, bottomInset = peek - 16.dp, onCropChanged = onCrop)
+            }
             Row(Modifier.statusBarsPadding().padding(12.dp)) {
                 GlassIconButton(R.drawable.ic_close, "Back to camera", onClick = onClose)
             }
@@ -369,9 +376,14 @@ private fun ResultScreen(state: UiState, onClose: () -> Unit) {
     }
 }
 
-/** The photo above the sheet, cropped around the square the model analysed, with sparkles while it works. */
+private enum class Handle { None, Move, TopLeft, TopRight, BottomLeft, BottomRight }
+
+/**
+ * The whole photo with a box marking what gets identified. Drag a corner to resize the box,
+ * drag inside it to move it; letting go identifies the new area. Sparkles show while it works.
+ */
 @Composable
-private fun FrozenPhoto(image: Bitmap, analysing: Boolean, bottomInset: Dp) {
+private fun CropEditor(image: Bitmap, crop: CropBox, analysing: Boolean, bottomInset: Dp, onCropChanged: (CropBox) -> Unit) {
     val sparkle = rememberInfiniteTransition(label = "sparkle")
     val time by sparkle.animateFloat(
         0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), label = "t",
@@ -379,29 +391,101 @@ private fun FrozenPhoto(image: Bitmap, analysing: Boolean, bottomInset: Dp) {
     val dots = remember { List(40) { Random(it).let { r -> Triple(r.nextFloat(), r.nextFloat(), r.nextFloat()) } } }
     val accent = MaterialTheme.colorScheme.primary
 
-    Box(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
-        Image(image.asImageBitmap(), "Photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        Canvas(Modifier.fillMaxSize()) {
-            // Where the model's centre square lands after the crop, kept inside the visible area.
-            val scale = max(size.width / image.width, size.height / image.height)
-            val side = min(min(image.width, image.height) * scale, min(size.width, size.height)) * 0.86f
-            val tl = Offset((size.width - side) / 2, (size.height - side) / 2)
-            if (analysing) {
-                drawRect(Color.Black.copy(alpha = 0.25f))
-                dots.forEach { (x, y, phase) ->
-                    val a = ((sin((time + phase) * 2 * PI) + 1) / 2).toFloat().let { it * it }
-                    val c = Offset(tl.x + x * side, tl.y + y * side)
-                    drawCircle(accent.copy(alpha = a * 0.35f), radius = (6 + 8 * a).dp.toPx() / 2, center = c)
-                    drawCircle(Color.White.copy(alpha = a), radius = (2 + 3 * a).dp.toPx() / 2, center = c)
-                }
+    var box by remember(image) { mutableStateOf(crop) }
+    LaunchedEffect(crop) { box = crop }  // e.g. "Reset box" from the sheet
+    var area by remember { mutableStateOf(Rect.Zero) }  // where the photo is drawn, in px
+    val latestOnCropChanged by rememberUpdatedState(onCropChanged)
+
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .padding(bottom = bottomInset)
+            .padding(20.dp)  // room to grab corners at the photo's edges
+            .onSizeChanged { sz ->
+                val scale = min(sz.width.toFloat() / image.width, sz.height.toFloat() / image.height)
+                val w = image.width * scale
+                val h = image.height * scale
+                area = Rect(Offset((sz.width - w) / 2, (sz.height - h) / 2), Size(w, h))
             }
-            drawCornerBrackets(tl, side, Color.White)
+            .pointerInput(image) {
+                var handle = Handle.None
+                val minSide = 56.dp.toPx()
+                detectDragGestures(
+                    onDragStart = { p -> handle = hitTest(p, box.toPx(area), 40.dp.toPx()) },
+                    onDragEnd = {
+                        if (handle != Handle.None) latestOnCropChanged(box)
+                        handle = Handle.None
+                    },
+                    onDragCancel = { handle = Handle.None },
+                ) { change, drag ->
+                    if (handle != Handle.None && area.width > 0f) {
+                        change.consume()
+                        box = box.dragged(handle, drag.x / area.width, drag.y / area.height, minSide / area.width, minSide / area.height)
+                    }
+                }
+            },
+    ) {
+        drawImage(
+            image.asImageBitmap(),
+            dstOffset = IntOffset(area.left.toInt(), area.top.toInt()),
+            dstSize = IntSize(area.width.toInt(), area.height.toInt()),
+        )
+        val b = box.toPx(area)
+        // Dim everything outside the box.
+        val dim = Color.Black.copy(alpha = 0.5f)
+        drawRect(dim, area.topLeft, Size(area.width, b.top - area.top))
+        drawRect(dim, Offset(area.left, b.bottom), Size(area.width, area.bottom - b.bottom))
+        drawRect(dim, Offset(area.left, b.top), Size(b.left - area.left, b.height))
+        drawRect(dim, Offset(b.right, b.top), Size(area.right - b.right, b.height))
+        drawRect(Color.White.copy(alpha = 0.5f), b.topLeft, b.size, style = Stroke(1.dp.toPx()))
+        if (analysing) {
+            dots.forEach { (x, y, phase) ->
+                val a = ((sin((time + phase) * 2 * PI) + 1) / 2).toFloat().let { it * it }
+                val c = Offset(b.left + x * b.width, b.top + y * b.height)
+                drawCircle(accent.copy(alpha = a * 0.35f), radius = (6 + 8 * a).dp.toPx() / 2, center = c)
+                drawCircle(Color.White.copy(alpha = a), radius = (2 + 3 * a).dp.toPx() / 2, center = c)
+            }
         }
+        drawCornerBrackets(b, Color.White)
     }
 }
 
+private fun CropBox.toPx(area: Rect) = Rect(
+    area.left + left * area.width, area.top + top * area.height,
+    area.left + right * area.width, area.top + bottom * area.height,
+)
+
+private fun hitTest(p: Offset, box: Rect, touch: Float): Handle {
+    val corners = listOf(
+        Handle.TopLeft to box.topLeft, Handle.TopRight to box.topRight,
+        Handle.BottomLeft to box.bottomLeft, Handle.BottomRight to box.bottomRight,
+    )
+    val (handle, corner) = corners.minBy { (_, c) -> (c - p).getDistance() }
+    return when {
+        (corner - p).getDistance() <= touch -> handle
+        box.contains(p) -> Handle.Move
+        else -> Handle.None
+    }
+}
+
+/** The box after dragging [handle] by (dx, dy), all in 0..1 image units; stays inside the photo. */
+private fun CropBox.dragged(handle: Handle, dx: Float, dy: Float, minW: Float, minH: Float): CropBox = when (handle) {
+    Handle.Move -> {
+        val w = right - left
+        val h = bottom - top
+        val l = (left + dx).coerceIn(0f, 1f - w)
+        val t = (top + dy).coerceIn(0f, 1f - h)
+        CropBox(l, t, l + w, t + h)
+    }
+    Handle.TopLeft -> copy(left = (left + dx).coerceIn(0f, right - minW), top = (top + dy).coerceIn(0f, bottom - minH))
+    Handle.TopRight -> copy(right = (right + dx).coerceIn(left + minW, 1f), top = (top + dy).coerceIn(0f, bottom - minH))
+    Handle.BottomLeft -> copy(left = (left + dx).coerceIn(0f, right - minW), bottom = (bottom + dy).coerceIn(top + minH, 1f))
+    Handle.BottomRight -> copy(right = (right + dx).coerceIn(left + minW, 1f), bottom = (bottom + dy).coerceIn(top + minH, 1f))
+    Handle.None -> this
+}
+
 @Composable
-private fun SheetContent(state: UiState, onRetake: () -> Unit) {
+private fun SheetContent(state: UiState, onRetake: () -> Unit, onCrop: (CropBox) -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -411,6 +495,19 @@ private fun SheetContent(state: UiState, onRetake: () -> Unit) {
             .padding(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        val image = state.image
+        if (image != null && !state.busy) {
+            val centre = CropBox.centreSquare(image.width, image.height)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Drag the box corners to fit the aircraft",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                if (state.crop != centre) TextButton(onClick = { onCrop(centre) }) { Text("Reset box") }
+            }
+        }
         when {
             state.error != null -> ErrorCard(state.error)
             state.busy || state.predictions.isEmpty() -> Searching()

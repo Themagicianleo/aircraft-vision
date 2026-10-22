@@ -27,6 +27,8 @@ data class UiState(
     val inferenceMs: Long? = null,
     val error: String? = null,
     val supportedTypes: List<AircraftLabel> = emptyList(),
+    /** The area being identified; starts as the centre square, then whatever the user drags it to. */
+    val crop: CropBox? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -60,6 +62,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { UiState(supportedTypes = it.supportedTypes) }
     }
 
+    /** The user moved or resized the box: identify what's inside it now. */
+    fun onCrop(box: CropBox) {
+        val image = _state.value.image ?: return
+        _state.update { it.copy(crop = box) }
+        analyse { image }
+    }
+
     private var job: Job? = null
 
     private fun analyse(load: suspend () -> Bitmap) {
@@ -69,11 +78,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // Show the photo straight away, then analyse it.
                 val bitmap = load()
-                _state.update { it.copy(image = bitmap) }
+                val box = _state.value.crop.takeIf { _state.value.image === bitmap }
+                    ?: CropBox.centreSquare(bitmap.width, bitmap.height)
+                _state.update { it.copy(image = bitmap, crop = box) }
                 val (predictions, ms) = withContext(Dispatchers.Default) {
                     val clf = classifier()
                     val start = System.nanoTime()
-                    clf.classify(bitmap) to (System.nanoTime() - start) / 1_000_000
+                    clf.classify(cropRegion(bitmap, box)) to (System.nanoTime() - start) / 1_000_000
                 }
                 _state.update { it.copy(predictions = predictions, inferenceMs = ms, busy = false) }
             } catch (e: CancellationException) {

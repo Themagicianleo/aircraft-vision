@@ -9,18 +9,56 @@ import org.json.JSONObject
 import java.io.Closeable
 import java.nio.FloatBuffer
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 data class AircraftLabel(val name: String, val family: String, val manufacturer: String)
 
 data class Prediction(val label: AircraftLabel, val confidence: Float)
 
+/** A box in image coordinates normalised to 0..1. */
+data class CropBox(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    companion object {
+        /** The centre square: what the model sees when nobody draws a box. */
+        fun centreSquare(width: Int, height: Int): CropBox {
+            val side = min(width, height).toFloat()
+            val x = (width - side) / 2 / width
+            val y = (height - side) / 2 / height
+            return CropBox(x, y, 1 - x, 1 - y)
+        }
+    }
+}
+
+/**
+ * Cuts [box] out of [bitmap], first widening it if needed so its aspect ratio stays within
+ * what training's random crops covered (about 3:5 to 5:3); a squashed sliver would confuse the model.
+ */
+fun cropRegion(bitmap: Bitmap, box: CropBox): Bitmap {
+    var l = box.left * bitmap.width
+    var t = box.top * bitmap.height
+    var r = box.right * bitmap.width
+    var b = box.bottom * bitmap.height
+    val maxAspect = 1.66f
+    if ((r - l) / (b - t) > maxAspect) {
+        val grow = ((r - l) / maxAspect - (b - t)) / 2
+        t = (t - grow).coerceAtLeast(0f)
+        b = (b + grow).coerceAtMost(bitmap.height.toFloat())
+    } else if ((b - t) / (r - l) > maxAspect) {
+        val grow = ((b - t) / maxAspect - (r - l)) / 2
+        l = (l - grow).coerceAtLeast(0f)
+        r = (r + grow).coerceAtMost(bitmap.width.toFloat())
+    }
+    val x = l.toInt().coerceIn(0, bitmap.width - 1)
+    val y = t.toInt().coerceIn(0, bitmap.height - 1)
+    val w = (r.toInt() - x).coerceIn(1, bitmap.width - x)
+    val h = (b.toInt() - y).coerceIn(1, bitmap.height - y)
+    return Bitmap.createBitmap(bitmap, x, y, w, h)
+}
+
 /**
  * Runs the exported ONNX model entirely on-device.
  *
  * The model takes RGB floats in [0,1] shaped [1,3,S,S] and returns softmax probabilities;
- * normalisation is baked into the model, so preprocessing here is just resize + centre crop,
- * matching training/av/mobile.py.
+ * normalisation is baked into the model, so preprocessing here is just a resize of the region
+ * to analyse (see [cropRegion]), matching training/av/mobile.py for the default centre square.
  */
 class AircraftClassifier(context: Context) : Closeable {
     private val env = OrtEnvironment.getEnvironment()
@@ -61,14 +99,16 @@ class AircraftClassifier(context: Context) : Closeable {
             .map { Prediction(labels[it], probs[it]) }
     }
 
-    /** Short side -> inputSize, centre crop, planar RGB floats. */
+    /**
+     * Resizes the given region straight to inputSize x inputSize (planar RGB floats).
+     * Callers pass the area to analyse: by default the centre square, which matches training's
+     * eval transform; a user-drawn box may be non-square, which training's random crops also cover.
+     */
     private fun toModelInput(source: Bitmap): FloatBuffer {
         val s = inputSize
-        val scaled = scaleShortSide(source, s)
-        val x = (scaled.width - s) / 2
-        val y = (scaled.height - s) / 2
+        val scaled = scaleTo(source, s, s)
         val pixels = IntArray(s * s)
-        scaled.getPixels(pixels, 0, s, x, y, s, s)
+        scaled.getPixels(pixels, 0, s, 0, 0, s, s)
         if (scaled !== source) scaled.recycle()
 
         val plane = s * s
@@ -86,17 +126,14 @@ class AircraftClassifier(context: Context) : Closeable {
      * Downscale by repeated halving first: a single bilinear step from a 12 MP photo
      * aliases badly, whereas the training pipeline (PIL) filters properly.
      */
-    private fun scaleShortSide(source: Bitmap, target: Int): Bitmap {
+    private fun scaleTo(source: Bitmap, w: Int, h: Int): Bitmap {
         var bmp = source
-        while (min(bmp.width, bmp.height) >= target * 2) {
+        while (bmp.width >= w * 2 && bmp.height >= h * 2) {
             val next = Bitmap.createScaledBitmap(bmp, bmp.width / 2, bmp.height / 2, true)
             if (bmp !== source) bmp.recycle()
             bmp = next
         }
-        val scale = target.toFloat() / min(bmp.width, bmp.height)
-        val w = maxOf(target, (bmp.width * scale).roundToInt())
-        val h = maxOf(target, (bmp.height * scale).roundToInt())
-        if (w == bmp.width && h == bmp.height) return bmp
+        if (bmp.width == w && bmp.height == h) return bmp
         val out = Bitmap.createScaledBitmap(bmp, w, h, true)
         if (bmp !== source) bmp.recycle()
         return out
