@@ -24,6 +24,7 @@ data class UiState(
     val busy: Boolean = false,
     val inferenceMs: Long? = null,
     val error: String? = null,
+    val supportedTypes: List<AircraftLabel> = emptyList(),
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -33,25 +34,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val mutex = Mutex()
     private var classifier: AircraftClassifier? = null
 
-    fun onImage(uri: Uri) {
-        _state.update { it.copy(busy = true, error = null, predictions = emptyList()) }
+    init {
+        // Load the model up front: the first photo is analysed faster, and the type list is ready.
         viewModelScope.launch {
             try {
-                val (bitmap, predictions, ms) = withContext(Dispatchers.Default) {
-                    val bitmap = decode(uri)
-                    val clf = classifier()
-                    val start = System.nanoTime()
-                    val predictions = clf.classify(bitmap)
-                    Triple(bitmap, predictions, (System.nanoTime() - start) / 1_000_000)
-                }
-                _state.update { UiState(image = bitmap, predictions = predictions, inferenceMs = ms) }
-            } catch (e: FileNotFoundException) {
-                _state.update { it.copy(busy = false, error = "Model not found. Copy aircraft.onnx and labels.json into app/src/main/assets and rebuild.") }
+                val labels = withContext(Dispatchers.Default) { classifier().labels }
+                _state.update { it.copy(supportedTypes = labels) }
             } catch (e: Exception) {
-                Log.e(TAG, "Classification failed", e)
-                _state.update { it.copy(busy = false, error = e.message ?: e.javaClass.simpleName) }
+                _state.update { it.copy(error = describe(e)) }
             }
         }
+    }
+
+    fun onImage(uri: Uri) {
+        _state.update { it.copy(busy = true, error = null, predictions = emptyList(), inferenceMs = null) }
+        viewModelScope.launch {
+            try {
+                // Show the photo straight away, then analyse it.
+                val bitmap = withContext(Dispatchers.IO) { decode(uri) }
+                _state.update { it.copy(image = bitmap) }
+                val (predictions, ms) = withContext(Dispatchers.Default) {
+                    val clf = classifier()
+                    val start = System.nanoTime()
+                    clf.classify(bitmap) to (System.nanoTime() - start) / 1_000_000
+                }
+                _state.update { it.copy(predictions = predictions, inferenceMs = ms, busy = false) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Classification failed", e)
+                _state.update { it.copy(busy = false, error = describe(e)) }
+            }
+        }
+    }
+
+    private fun describe(e: Exception): String = when (e) {
+        is FileNotFoundException -> "Model not found. Copy aircraft.onnx and labels.json into app/src/main/assets and rebuild."
+        else -> e.message ?: e.javaClass.simpleName
     }
 
     private suspend fun classifier(): AircraftClassifier = mutex.withLock {
