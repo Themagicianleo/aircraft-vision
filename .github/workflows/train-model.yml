@@ -193,7 +193,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write  # to create the release
-      actions: write   # to start the iPhone build for it
+      actions: write   # to start the iPhone and web builds for it
     steps:
       - uses: actions/checkout@v4
 
@@ -292,11 +292,13 @@ jobs:
             ${{ inputs.smoke && '--draft' || '--latest' }}
           echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag"
 
-      - name: Build the iPhone app for this release too
+      - name: Build the iPhone app and refresh the web app for this release too
         if: ${{ !inputs.smoke }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ios.yml --repo "$GITHUB_REPOSITORY" --ref main
+        run: |
+          gh workflow run ios.yml --repo "$GITHUB_REPOSITORY" --ref main
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
 
       - name: Report error
         if: failure()

@@ -103,7 +103,17 @@ The app lets you take a photo or pick one from the gallery, or share a photo to 
 
 Every push that touches `android/` is also built by GitHub Actions. The APK is attached to the run under **Actions → Android APK → Artifacts**. To ship the model in those builds, commit the two files in `assets/`.
 
-## 3. iPhone app
+## 3. Web app (any phone, no install)
+
+**https://themagicianleo.github.io/aircraft-vision/** runs the same model in the browser: live camera,
+crop box and spec-sheet results, with photos never leaving the phone. On iPhone open it in Safari and
+choose **Share → Add to Home Screen**; on Android, Chrome offers **Install app**. After the first visit
+it works offline. `web/` holds the app; `.github/workflows/pages.yml` publishes it with the model from
+the latest release, and runs again after every release.
+
+One-time setup: in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**.
+
+## 4. iPhone app
 
 `ios/` is a SwiftUI app with the same features, using the same `aircraft.onnx` through ONNX Runtime.
 GitHub Actions builds it on macOS (`.github/workflows/ios.yml`) and attaches **AircraftVision.ipa**

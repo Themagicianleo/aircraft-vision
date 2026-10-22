@@ -24,3 +24,8 @@ ios/Model/*.onnx
 ios/Model/labels.json
 ios/Payload/
 ios/*.ipa
+
+# Web app (ONNX Runtime and the model are added at deploy time)
+web/ort/
+web/model/
+_site/

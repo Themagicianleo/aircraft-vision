@@ -1,0 +1,61 @@
+name: Web app
+
+# Publishes web/ to GitHub Pages with the model from the latest release, so
+# https://<owner>.github.io/<repo>/ always runs the newest model. The phone apps' workflows
+# re-run this after every release.
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Assemble the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p _site/ort _site/model
+          cp -R web/. _site/
+          # ONNX Runtime for the browser, served from the same site (works offline once cached).
+          npm install --prefix /tmp/ort --silent onnxruntime-web@1.22.0
+          cp /tmp/ort/node_modules/onnxruntime-web/dist/{ort.wasm.min.mjs,ort-wasm-simd-threaded.mjs,ort-wasm-simd-threaded.wasm} _site/ort/
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern aircraft_model.zip --dir /tmp/model
+          unzip -o -q /tmp/model/aircraft_model.zip aircraft.onnx labels.json -d _site/model
+          # New version stamp -> the service worker replaces the phone's cached copy.
+          sed -i "s/__VERSION__/${tag}-${GITHUB_SHA::7}/" _site/sw.js
+          touch _site/.nojekyll
+          du -sh _site
+          echo "::notice title=Web app::model from $tag"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

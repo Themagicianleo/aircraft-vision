@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # to publish the release
-      actions: write   # to start the iPhone build for it
+      actions: write   # to start the iPhone and web builds for it
     defaults:
       run:
         working-directory: android
@@ -79,8 +79,10 @@ jobs:
             --title "Aircraft Vision app #${{ github.run_number }}" --notes-file notes.md
           echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/app-${{ github.run_number }}"
 
-      - name: Build the iPhone app for this release too
+      - name: Build the iPhone app and refresh the web app for this release too
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ios.yml --repo "$GITHUB_REPOSITORY" --ref main
+        run: |
+          gh workflow run ios.yml --repo "$GITHUB_REPOSITORY" --ref main
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
