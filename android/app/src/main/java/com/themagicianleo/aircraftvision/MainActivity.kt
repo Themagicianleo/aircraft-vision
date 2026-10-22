@@ -1,17 +1,24 @@
 package com.themagicianleo.aircraftvision
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
+import androidx.camera.core.CameraSelector
+import androidx.camera.view.LifecycleCameraController
+import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -19,11 +26,10 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,12 +37,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -47,18 +51,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,18 +78,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -87,21 +94,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.io.File
+import kotlin.math.PI
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
+import kotlin.random.Random
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Light status-bar icons: the camera and photo behind them are dark.
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         if (savedInstanceState == null) handleShare(intent)
         setContent {
-            AircraftTheme { AircraftScreen(viewModel) }
+            AircraftTheme { AircraftApp(viewModel) }
         }
     }
 
@@ -119,76 +132,24 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AircraftScreen(viewModel: MainViewModel) {
+private fun AircraftApp(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var pendingCapture by rememberSaveable { mutableStateOf<Uri?>(null) }
     var showTypes by rememberSaveable { mutableStateOf(false) }
-
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let(viewModel::onImage)
     }
-    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
-        if (saved) pendingCapture?.let(viewModel::onImage)
-    }
     val openGallery = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-    val openCamera = {
-        val dir = File(context.cacheDir, "captures").apply { mkdirs() }
-        val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        pendingCapture = uri
-        takePhoto.launch(uri)
-    }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Header(typeCount = state.supportedTypes.size, onShowTypes = { showTypes = true })
-
-        Column(
-            Modifier
-                .offset(y = (-28).dp)
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            PhotoCard(image = state.image, scanning = state.busy, onClick = openGallery)
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = openCamera,
-                    modifier = Modifier.weight(1f).height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                ) {
-                    Icon(painterResource(R.drawable.ic_camera), contentDescription = null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Camera", style = MaterialTheme.typography.labelLarge)
-                }
-                FilledTonalButton(
-                    onClick = openGallery,
-                    modifier = Modifier.weight(1f).height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                ) {
-                    Icon(painterResource(R.drawable.ic_gallery), contentDescription = null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Gallery", style = MaterialTheme.typography.labelLarge)
-                }
-            }
-
-            state.error?.let { ErrorCard(it) }
-
-            AnimatedVisibility(
-                visible = state.predictions.isNotEmpty(),
-                enter = fadeIn(tween(400)) + slideInVertically(tween(400)) { it / 6 },
-            ) {
-                Results(state.predictions, state.inferenceMs)
-            }
-
-            if (state.predictions.isEmpty() && !state.busy) Tips()
-        }
+    val showingResult = state.image != null || state.busy || state.predictions.isNotEmpty()
+    if (showingResult) {
+        ResultScreen(state, onClose = viewModel::clear)
+    } else {
+        CameraScreen(
+            error = state.error,
+            onCapture = viewModel::onBitmap,
+            onGallery = openGallery,
+            onShowTypes = { showTypes = true },
+        )
     }
 
     if (showTypes) {
@@ -198,258 +159,324 @@ private fun AircraftScreen(viewModel: MainViewModel) {
     }
 }
 
-// ------------------------------------------------------------------ header
+// ------------------------------------------------------------------ camera
 
 @Composable
-private fun Header(typeCount: Int, onShowTypes: () -> Unit) {
+private fun CameraScreen(error: String?, onCapture: (Bitmap) -> Unit, onGallery: () -> Unit, onShowTypes: () -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var granted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+    }
+    val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
+    LaunchedEffect(Unit) { if (!granted) requestPermission.launch(Manifest.permission.CAMERA) }
+
+    var torch by remember { mutableStateOf(false) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    val controller = remember {
+        LifecycleCameraController(context).apply { cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA }
+    }
+    if (granted) {
+        DisposableEffect(lifecycleOwner) {
+            controller.bindToLifecycle(lifecycleOwner)
+            onDispose { controller.unbind() }
+        }
+        LaunchedEffect(torch) { controller.enableTorch(torch) }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (granted) {
+            // Pinch-to-zoom and tap-to-focus come with the camera controller.
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        this.controller = controller
+                        previewView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            Viewfinder(Modifier.fillMaxSize())
+        } else {
+            NoCameraPermission(
+                onAllow = { requestPermission.launch(Manifest.permission.CAMERA) },
+                onSettings = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                    )
+                },
+            )
+        }
+
+        // Top bar
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GlassIconButton(if (torch) R.drawable.ic_flash_on else R.drawable.ic_flash_off, "Torch", enabled = granted) { torch = !torch }
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Icon(painterResource(R.drawable.ic_flight), null, tint = Color.White, modifier = Modifier.size(20.dp).rotate(45f))
+                Spacer(Modifier.width(8.dp))
+                Text("Aircraft Vision", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
+            GlassIconButton(R.drawable.ic_list, "Aircraft it knows", onClick = onShowTypes)
+        }
+
+        // Bottom controls
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            error?.let {
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.padding(16.dp)) {
+                    Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Text(
+                if (granted) "Point at an aircraft and tap search" else "Or pick a photo from your gallery",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White,
+                modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+            Spacer(Modifier.height(24.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 36.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GlassIconButton(R.drawable.ic_gallery, "Choose from gallery", size = 52.dp, onClick = onGallery)
+                ShutterButton(enabled = granted) { previewView?.bitmap?.let(onCapture) }
+                Spacer(Modifier.size(52.dp))  // balances the gallery button
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "Aircraft",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.Black,
+                modifier = Modifier.clip(CircleShape).background(Color.White).padding(horizontal = 18.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+/** Rounded corner brackets around the centre square: the part of the frame the model analyses. */
+@Composable
+private fun Viewfinder(modifier: Modifier) {
+    Canvas(modifier) {
+        val side = min(size.width, size.height) * 0.82f
+        drawCornerBrackets(Offset((size.width - side) / 2, (size.height - side) / 2), side, Color.White)
+    }
+}
+
+private fun DrawScope.drawCornerBrackets(topLeft: Offset, side: Float, color: Color) {
+    val arm = side * 0.14f
+    val stroke = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+    val r = side * 0.06f  // corner radius
+    val (l, t) = topLeft
+    val rgt = l + side
+    val btm = t + side
+    // Each bracket: a quarter-circle corner with two short straight arms.
+    data class Corner(val cx: Float, val cy: Float, val start: Float, val dx: Float, val dy: Float)
+    listOf(
+        Corner(l + r, t + r, 180f, 1f, 1f), Corner(rgt - r, t + r, 270f, -1f, 1f),
+        Corner(rgt - r, btm - r, 0f, -1f, -1f), Corner(l + r, btm - r, 90f, 1f, -1f),
+    ).forEach { c ->
+        drawArc(color, c.start, 90f, false, Offset(c.cx - r, c.cy - r), androidx.compose.ui.geometry.Size(2 * r, 2 * r), style = stroke)
+        val ex = c.cx - c.dx * r  // x of the vertical edge
+        val ey = c.cy - c.dy * r  // y of the horizontal edge
+        drawLine(color, Offset(c.cx, ey), Offset(c.cx + c.dx * (arm - r), ey), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(ex, c.cy), Offset(ex, c.cy + c.dy * (arm - r)), stroke.width, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun ShutterButton(enabled: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = 36.dp, bottomEnd = 36.dp))
-            .background(SkyGradient),
-    ) {
-        // A big faint aircraft silhouette climbing out of the corner.
-        Icon(
-            painterResource(R.drawable.ic_flight),
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.07f),
-            modifier = Modifier
-                .size(220.dp)
-                .align(Alignment.TopEnd)
-                .offset(x = 50.dp, y = 10.dp)
-                .rotate(45f),
-        )
-        Column(
-            Modifier
-                .statusBarsPadding()
-                .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 52.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(R.drawable.ic_flight), null, tint = Color.White, modifier = Modifier.size(20.dp).rotate(45f))
-                }
-                Spacer(Modifier.width(10.dp))
-                Text("AIRCRAFT VISION", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f))
-            }
-            Spacer(Modifier.height(18.dp))
-            Text("What's that plane?", style = MaterialTheme.typography.displaySmall, color = Color.White)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Snap or choose a photo and it's identified right on your phone.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color.White.copy(alpha = 0.8f),
-            )
-            Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HeaderChip(R.drawable.ic_offline, "Works offline")
-                if (typeCount > 0) HeaderChip(R.drawable.ic_list, "$typeCount aircraft types", onClick = onShowTypes)
-            }
-        }
-    }
-}
-
-@Composable
-private fun HeaderChip(icon: Int, text: String, onClick: (() -> Unit)? = null) {
-    Row(
-        Modifier
+            .size(84.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .border(4.dp, Color.White, CircleShape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(8.dp)
+            .clip(CircleShape)
+            .background(if (enabled) Color.White else Color.White.copy(alpha = 0.4f)),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(icon), null, tint = Color.White, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium, color = Color.White)
-        if (onClick != null) Text("  ›", style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
-    }
-}
-
-// -------------------------------------------------------------- photo card
-
-@Composable
-private fun PhotoCard(image: Bitmap?, scanning: Boolean, onClick: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(28.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        if (image == null) {
-            EmptyPhoto(onClick)
-        } else {
-            Box {
-                Image(
-                    image.asImageBitmap(),
-                    contentDescription = "Selected photo",
-                    contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                // The model looks at the centre square of the photo: show it, and scan it while working.
-                FocusSquare(
-                    aspect = image.width.toFloat() / image.height,
-                    scanning = scanning,
-                    modifier = Modifier.matchParentSize(),
-                )
-            }
-        }
+        Icon(painterResource(R.drawable.ic_search), "Identify", tint = Color(0xFF0B63B6), modifier = Modifier.size(32.dp))
     }
 }
 
 @Composable
-private fun EmptyPhoto(onClick: () -> Unit) {
-    val dash = MaterialTheme.colorScheme.outlineVariant
-    Column(
+private fun GlassIconButton(icon: Int, description: String, size: Dp = 44.dp, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
         Modifier
-            .fillMaxWidth()
-            .aspectRatio(4f / 3f)
-            .clickable(onClick = onClick)
-            .padding(14.dp)
-            .drawBehind {
-                drawRoundRect(
-                    color = dash,
-                    style = Stroke(width = 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 14f))),
-                    cornerRadius = CornerRadius(20.dp.toPx()),
-                )
-            },
+            .size(size)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.35f))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(icon), description, tint = Color.White.copy(alpha = if (enabled) 1f else 0.4f), modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun NoCameraPermission(onAllow: () -> Unit, onSettings: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painterResource(R.drawable.ic_flight), null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(36.dp).rotate(45f),
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Text("No photo yet", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(4.dp))
+        Icon(painterResource(R.drawable.ic_search), null, tint = Color.White, modifier = Modifier.size(48.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("Identify aircraft with your camera", style = MaterialTheme.typography.titleLarge, color = Color.White, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
         Text(
-            "Tap here or use the buttons below",
+            "Allow camera access to point at a plane and identify it. Photos never leave your phone.",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = Color.White.copy(alpha = 0.75f),
+            textAlign = TextAlign.Center,
         )
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onAllow) { Text("Allow camera") }
+        TextButton(onClick = onSettings) { Text("Open settings", color = Color.White) }
+    }
+}
+
+// ------------------------------------------------------------------ result
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResultScreen(state: UiState, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val peek = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
+    BottomSheetScaffold(
+        scaffoldState = rememberBottomSheetScaffoldState(),
+        sheetPeekHeight = peek,
+        sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        sheetContainerColor = MaterialTheme.colorScheme.surface,
+        containerColor = Color.Black,
+        sheetContent = { SheetContent(state, onRetake = onClose) },
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            state.image?.let { FrozenPhoto(it, analysing = state.busy, bottomInset = peek - 24.dp) }
+            Row(Modifier.statusBarsPadding().padding(12.dp)) {
+                GlassIconButton(R.drawable.ic_close, "Back to camera", onClick = onClose)
+            }
+        }
+    }
+}
+
+/** The photo above the sheet, cropped around the square the model analysed, with sparkles while it works. */
+@Composable
+private fun FrozenPhoto(image: Bitmap, analysing: Boolean, bottomInset: Dp) {
+    val sparkle = rememberInfiniteTransition(label = "sparkle")
+    val time by sparkle.animateFloat(
+        0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), label = "t",
+    )
+    val dots = remember { List(40) { Random(it).let { r -> Triple(r.nextFloat(), r.nextFloat(), r.nextFloat()) } } }
+    val accent = MaterialTheme.colorScheme.primary
+
+    Box(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
+        Image(image.asImageBitmap(), "Photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Canvas(Modifier.fillMaxSize()) {
+            // Where the model's centre square lands after the crop, kept inside the visible area.
+            val scale = max(size.width / image.width, size.height / image.height)
+            val side = min(min(image.width, image.height) * scale, min(size.width, size.height)) * 0.86f
+            val tl = Offset((size.width - side) / 2, (size.height - side) / 2)
+            if (analysing) {
+                drawRect(Color.Black.copy(alpha = 0.25f))
+                dots.forEach { (x, y, phase) ->
+                    val a = ((sin((time + phase) * 2 * PI) + 1) / 2).toFloat().let { it * it }
+                    val c = Offset(tl.x + x * side, tl.y + y * side)
+                    drawCircle(accent.copy(alpha = a * 0.35f), radius = (6 + 8 * a).dp.toPx() / 2, center = c)
+                    drawCircle(Color.White.copy(alpha = a), radius = (2 + 3 * a).dp.toPx() / 2, center = c)
+                }
+            }
+            drawCornerBrackets(tl, side, Color.White)
+        }
     }
 }
 
 @Composable
-private fun FocusSquare(aspect: Float, scanning: Boolean, modifier: Modifier) {
-    val sweep = rememberInfiniteTransition(label = "scan")
-    val progress by sweep.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "scanLine",
-    )
-    val accent = MaterialTheme.colorScheme.primary
-    Canvas(modifier) {
-        val side = min(size.width, size.height)
-        val left = (size.width - side) / 2
-        val top = (size.height - side) / 2
-        val dim = Color.Black.copy(alpha = 0.45f)
-        // Dim what the model ignores (only visible for non-square photos).
-        if (aspect > 1f) {
-            drawRect(dim, Offset.Zero, Size(left, size.height))
-            drawRect(dim, Offset(left + side, 0f), Size(left, size.height))
-        } else if (aspect < 1f) {
-            drawRect(dim, Offset.Zero, Size(size.width, top))
-            drawRect(dim, Offset(0f, top + side), Size(size.width, top))
+private fun SheetContent(state: UiState, onRetake: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 22.dp)
+            .navigationBarsPadding()
+            .padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        when {
+            state.error != null -> ErrorCard(state.error)
+            state.busy || state.predictions.isEmpty() -> Searching()
+            else -> Results(state.predictions, state.inferenceMs)
         }
-        // Viewfinder corner brackets.
-        val arm = side * 0.12f
-        val inset = side * 0.04f
-        val stroke = 3.dp.toPx()
-        val l = left + inset
-        val t = top + inset
-        val r = left + side - inset
-        val b = top + side - inset
-        listOf(
-            Offset(l, t) to Offset(1f, 1f), Offset(r, t) to Offset(-1f, 1f),
-            Offset(l, b) to Offset(1f, -1f), Offset(r, b) to Offset(-1f, -1f),
-        ).forEach { (c, d) ->
-            drawLine(Color.White, c, Offset(c.x + arm * d.x, c.y), stroke, StrokeCap.Round)
-            drawLine(Color.White, c, Offset(c.x, c.y + arm * d.y), stroke, StrokeCap.Round)
-        }
-        if (scanning) {
-            val y = t + (b - t) * progress
-            drawRect(
-                Brush.verticalGradient(listOf(Color.Transparent, accent.copy(alpha = 0.35f)), startY = y - 60f, endY = y),
-                Offset(l, y - 60f), Size(r - l, 60f),
-            )
-            drawLine(accent, Offset(l, y), Offset(r, y), 2.5.dp.toPx(), StrokeCap.Round)
+        if (!state.busy) {
+            OutlinedButton(onClick = onRetake, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                Icon(painterResource(R.drawable.ic_search), null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Search another aircraft")
+            }
         }
     }
 }
 
-// ----------------------------------------------------------------- results
+@Composable
+private fun Searching() {
+    val pulse = rememberInfiniteTransition(label = "pulse")
+    val alpha by pulse.animateFloat(0.35f, 0.8f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "a")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.5.dp)
+        Spacer(Modifier.width(12.dp))
+        Text("Looking closely…", style = MaterialTheme.typography.titleMedium)
+    }
+    // Skeleton of the result card while the model runs.
+    val skeleton = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha)
+    Box(Modifier.fillMaxWidth(0.6f).height(34.dp).clip(RoundedCornerShape(10.dp)).background(skeleton))
+    Box(Modifier.fillMaxWidth(0.4f).height(18.dp).clip(RoundedCornerShape(8.dp)).background(skeleton))
+    repeat(3) { Box(Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp)).background(skeleton)) }
+}
 
 @Composable
 private fun Results(predictions: List<Prediction>, inferenceMs: Long?) {
-    val best = predictions.firstOrNull() ?: return  // empty while the card animates away
+    val best = predictions.first()
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Card(
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        ) {
-            Column(Modifier.padding(22.dp)) {
-                Text("IDENTIFIED AS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            best.label.name,
-                            style = MaterialTheme.typography.displaySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (best.label.manufacturer.isNotBlank()) Pill(best.label.manufacturer, strong = true)
-                            if (best.label.family.isNotBlank() && best.label.family != best.label.name) Pill(best.label.family)
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    ConfidenceRing(best.confidence)
+        Text("BEST MATCH", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(best.label.name, style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (best.label.manufacturer.isNotBlank()) Pill(best.label.manufacturer, strong = true)
+                    if (best.label.family.isNotBlank() && best.label.family != best.label.name) Pill(best.label.family)
                 }
-                if (best.confidence < LOW_CONFIDENCE) {
-                    Spacer(Modifier.height(16.dp))
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                    ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(painterResource(R.drawable.ic_info), null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Not sure about this one. A sharper photo with the aircraft filling the square works best.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                        }
-                    }
+            }
+            Spacer(Modifier.width(12.dp))
+            ConfidenceRing(best.confidence)
+        }
+        if (best.confidence < LOW_CONFIDENCE) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(R.drawable.ic_info), null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Not sure about this one. Get closer so the aircraft fills the brackets.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
                 }
             }
         }
-
         if (predictions.size > 1) {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("COULD ALSO BE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    predictions.drop(1).forEachIndexed { i, p -> AlternativeRow(rank = i + 2, prediction = p) }
-                }
-            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("COULD ALSO BE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            predictions.drop(1).forEachIndexed { i, p -> AlternativeRow(rank = i + 2, prediction = p) }
         }
-
         inferenceMs?.let {
             Text(
                 "Analysed on your phone in $it ms · no internet used",
@@ -478,7 +505,7 @@ private fun Pill(text: String, strong: Boolean = false) {
 }
 
 @Composable
-private fun ConfidenceRing(confidence: Float, size: Dp = 92.dp) {
+private fun ConfidenceRing(confidence: Float, size: Dp = 88.dp) {
     val animated = remember { Animatable(0f) }
     LaunchedEffect(confidence) { animated.animateTo(confidence, tween(900)) }
     val color = confidenceColor(confidence)
@@ -524,9 +551,7 @@ private fun AlternativeRow(rank: Int, prediction: Prediction) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(6.dp))
-            Box(
-                Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
-            ) {
+            Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
                 Box(
                     Modifier
                         .fillMaxWidth(animated.value.coerceIn(0.02f, 1f))
@@ -539,8 +564,6 @@ private fun AlternativeRow(rank: Int, prediction: Prediction) {
     }
 }
 
-// ------------------------------------------------------------ misc cards
-
 @Composable
 private fun ErrorCard(message: String) {
     Card(
@@ -552,35 +575,6 @@ private fun ErrorCard(message: String) {
             Spacer(Modifier.width(12.dp))
             Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
         }
-    }
-}
-
-@Composable
-private fun Tips() {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-    ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("TIPS FOR A GOOD MATCH", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            Tip("1", "Let the aircraft fill most of the frame")
-            Tip("2", "Side or three-quarter views work best")
-            Tip("3", "Zoom in rather than shooting a dot in the sky")
-        }
-    }
-}
-
-@Composable
-private fun Tip(number: String, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(number, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -605,6 +599,7 @@ private fun SupportedTypes(types: List<AircraftLabel>) {
             value = query,
             onValueChange = { query = it },
             placeholder = { Text("Search, e.g. 787 or Airbus") },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth(),

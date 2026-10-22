@@ -7,7 +7,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -46,12 +48,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun onImage(uri: Uri) {
+    /** A photo picked from the gallery or shared from another app. */
+    fun onImage(uri: Uri) = analyse { withContext(Dispatchers.IO) { decode(uri) } }
+
+    /** A frame frozen from the live camera. */
+    fun onBitmap(bitmap: Bitmap) = analyse { bitmap }
+
+    /** Back to the camera. */
+    fun clear() {
+        job?.cancel()
+        _state.update { UiState(supportedTypes = it.supportedTypes) }
+    }
+
+    private var job: Job? = null
+
+    private fun analyse(load: suspend () -> Bitmap) {
+        job?.cancel()
         _state.update { it.copy(busy = true, error = null, predictions = emptyList(), inferenceMs = null) }
-        viewModelScope.launch {
+        job = viewModelScope.launch {
             try {
                 // Show the photo straight away, then analyse it.
-                val bitmap = withContext(Dispatchers.IO) { decode(uri) }
+                val bitmap = load()
                 _state.update { it.copy(image = bitmap) }
                 val (predictions, ms) = withContext(Dispatchers.Default) {
                     val clf = classifier()
@@ -59,6 +76,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     clf.classify(bitmap) to (System.nanoTime() - start) / 1_000_000
                 }
                 _state.update { it.copy(predictions = predictions, inferenceMs = ms, busy = false) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Classification failed", e)
                 _state.update { it.copy(busy = false, error = describe(e)) }
