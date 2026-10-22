@@ -12,7 +12,14 @@ import kotlin.math.min
 
 data class AircraftLabel(val name: String, val family: String, val manufacturer: String)
 
-data class Prediction(val label: AircraftLabel, val confidence: Float)
+data class Prediction(
+    val label: AircraftLabel,
+    val confidence: Float,
+    /** Probability summed over every variant in this label's family (e.g. all Boeing 737s). */
+    val familyConfidence: Float = confidence,
+    /** How many variants the model knows in this family. */
+    val familySize: Int = 1,
+)
 
 /** A box in image coordinates normalised to 0..1. */
 data class CropBox(val left: Float, val top: Float, val right: Float, val bottom: Float) {
@@ -66,6 +73,7 @@ class AircraftClassifier(context: Context) : Closeable {
     private val inputName: String
     val labels: List<AircraftLabel>
     val inputSize: Int
+    private val familySizes: Map<String, Int>
 
     init {
         val json = JSONObject(context.assets.open(LABELS_FILE).bufferedReader().use { it.readText() })
@@ -75,6 +83,7 @@ class AircraftClassifier(context: Context) : Closeable {
             val c = classes.getJSONObject(i)
             AircraftLabel(c.getString("name"), c.optString("family"), c.optString("manufacturer"))
         }
+        familySizes = labels.groupingBy { it.family }.eachCount()
 
         val modelBytes = context.assets.open(MODEL_FILE).use { it.readBytes() }
         val options = OrtSession.SessionOptions().apply {
@@ -93,10 +102,12 @@ class AircraftClassifier(context: Context) : Closeable {
                 (result[0].value as Array<FloatArray>)[0]
             }
         }
+        val familyTotals = HashMap<String, Float>()
+        labels.forEachIndexed { i, l -> familyTotals[l.family] = (familyTotals[l.family] ?: 0f) + probs[i] }
         return probs.indices
             .sortedByDescending { probs[it] }
             .take(topK)
-            .map { Prediction(labels[it], probs[it]) }
+            .map { Prediction(labels[it], probs[it], familyTotals.getValue(labels[it].family), familySizes.getValue(labels[it].family)) }
     }
 
     /**

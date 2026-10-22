@@ -12,6 +12,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import unquote
 
 from PIL import Image
 from torch.utils.data import Dataset
@@ -140,8 +141,9 @@ def add_folder(bundle: DataBundle, root: str | Path) -> None:
         if not split_dir.exists():
             continue
         for class_dir in sorted(p for p in split_dir.iterdir() if p.is_dir()):
-            h = hier.get(class_dir.name, {})
-            idx = bundle.class_index(class_dir.name, h.get("family", ""), h.get("manufacturer", ""))
+            name = unquote(class_dir.name)  # fetch_commons writes "F-16A/B" as "F-16A%2FB"
+            h = hier.get(name, {})
+            idx = bundle.class_index(name, h.get("family", ""), h.get("manufacturer", ""))
             for img in sorted(class_dir.rglob("*")):
                 if img.suffix.lower() in IMAGE_EXTS:
                     target.append((str(img), idx))

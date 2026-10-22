@@ -32,6 +32,7 @@ API = "https://commons.wikimedia.org/w/api.php"
 USER_AGENT = "AircraftVision/0.1 (https://github.com/Themagicianleo/aircraft-vision; aircraft classifier training data)"
 THUMB_WIDTH = 960  # one of Wikimedia's standard thumbnail sizes, so it is served from cache
 MIN_SIDE = 400
+STORE_SHORT_SIDE = 448
 
 # Subcategories / file names containing these words are rarely a photo of the whole aircraft.
 SKIP_WORDS = [
@@ -163,6 +164,11 @@ def crawl(api: Commons, roots: list[str], skip: re.Pattern, other_roots: set[str
     return files
 
 
+def folder_name(cls: str) -> str:
+    """Class names like "F-16A/B" can't be folder names; av.data.add_folder decodes this."""
+    return cls.replace("/", "%2F")
+
+
 def strip_html(s: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", s or "")).strip()
 
@@ -180,8 +186,11 @@ def download(api: Commons, url: str, dst: Path) -> bool:
         return False
     if min(im.size) < MIN_SIDE:
         return False
+    scale = STORE_SHORT_SIDE / min(im.size)
+    if scale < 1:  # keeps the cached dataset small; training crops are far smaller than this
+        im = im.resize((round(im.width * scale), round(im.height * scale)), Image.BILINEAR)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    im.save(dst, quality=92)
+    im.save(dst, quality=90)
     return True
 
 
@@ -199,6 +208,8 @@ def main():
     p.add_argument("--max-depth", type=int, default=3, help="how deep to follow subcategories")
     p.add_argument("--max-categories", type=int, default=400, help="per class, bounds API calls")
     p.add_argument("--workers", type=int, default=3, help="parallel downloads (keep small, be polite)")
+    p.add_argument("--time-limit-min", type=float, default=0,
+                   help="stop starting new types after this many minutes (what's downloaded is kept)")
     p.add_argument("--api", default=API, help=argparse.SUPPRESS)
     args = p.parse_args()
 
@@ -255,7 +266,11 @@ def main():
         with open(credits_path, newline="") as f:
             credits = {r["file"]: r for r in csv.DictReader(f)}
 
+    started = time.time()
     for t in types:
+        if args.time_limit_min and time.time() - started > args.time_limit_min * 60:
+            print(f"Time budget used: skipping {t['class']} and the types after it this run.")
+            break
         cls = t["class"]
         if cls not in candidates:
             continue
@@ -276,7 +291,7 @@ def main():
                 continue
             split = split_of(title, args.val_fraction)
             name = hashlib.sha1(title.encode()).hexdigest()[:16] + ".jpg"
-            rel = f"{split}/{cls}/{name}"
+            rel = f"{split}/{folder_name(cls)}/{name}"
             meta = ii.get("extmetadata", {})
             credits[rel] = {
                 "file": rel, "class": cls, "title": title,

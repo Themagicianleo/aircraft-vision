@@ -51,6 +51,11 @@ fun ResultDetails(predictions: List<Prediction>, inferenceMs: Long?) {
     val best = predictions.first()
     val specs = remember(best.label.name) { specsFor(best.label.name) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    // Close variants (737-800 vs -900) are the hardest call. When the model is torn between
+    // variants but sure of the family, say the family rather than guess a variant.
+    val familyMode = best.familySize > 1 && best.confidence < 0.6f && best.familyConfidence >= 0.75f
+    val score = if (familyMode) best.familyConfidence else best.confidence
+    val likelyVariants = predictions.filter { it.label.family == best.label.family }.take(2)
 
     Column {
         // Title block
@@ -58,21 +63,27 @@ fun ResultDetails(predictions: List<Prediction>, inferenceMs: Long?) {
             Column(Modifier.weight(1f)) {
                 Text(best.label.manufacturer.uppercase(), style = MaterialTheme.typography.labelSmall, color = muted)
                 Text(
-                    best.label.name,
+                    if (familyMode) familyTitle(best.label) else best.label.name,
                     fontSize = 36.sp,
                     lineHeight = 40.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-1).sp,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                if (best.label.family.isNotBlank() && best.label.family != best.label.name) {
+                if (familyMode) {
+                    Text(
+                        "Variant unclear · most likely " + likelyVariants.joinToString(" or ") { it.label.name },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = muted,
+                    )
+                } else if (best.label.family.isNotBlank() && best.label.family != best.label.name) {
                     Text(best.label.family, style = MaterialTheme.typography.bodyMedium, color = muted)
                 }
             }
-            MatchScore(best.confidence)
+            MatchScore(score)
         }
 
-        if (best.confidence < LOW_CONFIDENCE) {
+        if (score < LOW_CONFIDENCE) {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(R.drawable.ic_info), null, tint = ConfidenceMid, modifier = Modifier.size(16.dp))
@@ -112,6 +123,9 @@ fun ResultDetails(predictions: List<Prediction>, inferenceMs: Long?) {
         SectionLabel("Specifications")
         SpecRow("Manufacturer", best.label.manufacturer.ifBlank { "—" })
         SpecRow("Family", best.label.family.ifBlank { best.label.name })
+        if (familyMode) {
+            SpecRow("Variant", likelyVariants.joinToString(" / ") { "${it.label.name} ${(it.confidence * 100).toInt()}%" })
+        }
         SpecRow("Body", specs.kind.description)
         SpecRow("Seating", specs.seating)
         SpecRow("Engines", specs.enginesText, last = true)
@@ -134,6 +148,13 @@ fun ResultDetails(predictions: List<Prediction>, inferenceMs: Long?) {
             )
         }
     }
+}
+
+/** "Boeing 737" -> "Boeing 737 family"; "A320" -> "Airbus A320 family". */
+private fun familyTitle(label: AircraftLabel): String {
+    val family = label.family.ifBlank { label.name }
+    val withMaker = if (label.manufacturer.isNotBlank() && !family.startsWith(label.manufacturer)) "${label.manufacturer} $family" else family
+    return "$withMaker family"
 }
 
 private val COCKPIT_ONLY = setOf(BodyKind.FIGHTER, BodyKind.LIGHT, BodyKind.TRANSPORT)

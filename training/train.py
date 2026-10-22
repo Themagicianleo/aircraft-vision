@@ -20,6 +20,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
+from timm.utils import ModelEmaV3
 from torch.utils.data import DataLoader
 
 from av.data import DataBundle, ItemDataset, add_fgvc, add_folder, prepare_fgvc
@@ -49,6 +50,8 @@ def parse_args():
     p.add_argument("--time-limit-min", type=float, default=0,
                    help="stop cleanly (checkpoint saved) before this many minutes; rerun with --resume to continue")
     p.add_argument("--eval-every", type=int, default=1, help="evaluate every N epochs (always on the last)")
+    p.add_argument("--ema-decay", type=float, default=0.9998,
+                   help="keep an exponential moving average of the weights (evaluated and exported); 0 = off")
     return p.parse_args()
 
 
@@ -111,12 +114,16 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: (s + 1) / warmup if s < warmup else 0.5 * (1 + math.cos(math.pi * (s - warmup) / max(1, total_steps - warmup))))
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
+    # Averaged weights are smoother than the last step's and usually a little more accurate.
+    ema = ModelEmaV3(model, decay=args.ema_decay, use_warmup=True) if args.ema_decay else None
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
     start_epoch, history = 0, []
     if args.resume and (out / "last.pt").exists():
         ck = torch.load(out / "last.pt", map_location=device, weights_only=False)
-        model.load_state_dict(ck["model"])
+        model.load_state_dict(ck.get("train_model", ck["model"]))
+        if ema is not None:
+            ema.module.load_state_dict(ck["model"])  # the averaged weights (or, for old checkpoints, the plain ones)
         opt.load_state_dict(ck["optimizer"])
         sched.load_state_dict(ck["scheduler"])
         start_epoch, history = ck["epoch"] + 1, ck["history"]
@@ -138,6 +145,8 @@ def main():
             scaler.step(opt)
             scaler.update()
             sched.step()
+            if ema is not None:
+                ema.update(model, step=sched.last_epoch)
             running += loss.item() * len(y)
             seen += len(y)
             if step % 50 == 0:
@@ -146,14 +155,17 @@ def main():
                       f"loss {running / seen:.3f}  ~{left / 60:.0f} min left in this epoch")
 
         last = epoch == args.epochs - 1
-        metrics = evaluate(model, val_dl, device, bundle) if bundle.val and (last or (epoch + 1) % args.eval_every == 0) else {}
+        best_weights = ema.module if ema is not None else model
+        metrics = evaluate(best_weights, val_dl, device, bundle) if bundle.val and (last or (epoch + 1) % args.eval_every == 0) else {}
         history.append({"epoch": epoch, "loss": running / max(seen, 1), **metrics})
         print(f"epoch {epoch + 1}/{args.epochs}  loss {running / max(seen, 1):.3f}  "
               + "  ".join(f"{k} {v:.3f}" for k, v in metrics.items()) + f"  ({time.time() - t0:.0f}s)")
 
         ck = {
-            "model": model.state_dict(), "optimizer": opt.state_dict(), "scheduler": sched.state_dict(),
+            # "model" holds the weights to export (the averaged ones when EMA is on).
+            "model": best_weights.state_dict(), "optimizer": opt.state_dict(), "scheduler": sched.state_dict(),
             "epoch": epoch, "history": history,
+            **({"train_model": model.state_dict()} if ema is not None else {}),
             "meta": {"model": args.model, "img_size": args.img_size, "mean": mean, "std": std,
                      "classes": bundle.classes, "hierarchy": bundle.hierarchy},
         }

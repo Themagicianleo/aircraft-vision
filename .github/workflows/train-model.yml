@@ -11,13 +11,13 @@ on:
         default: "30"
       img_size:
         description: Image size the model sees
-        default: "256"
+        default: "288"
       model:
         description: Model architecture (timm name)
-        default: efficientnet_b0
+        default: efficientnet_b2
       per_class:
         description: Max Wikimedia Commons photos per aircraft type
-        default: "250"
+        default: "400"
       smoke:
         description: Quick end-to-end test (tiny run, draft release)
         type: boolean
@@ -41,7 +41,7 @@ jobs:
   data:
     name: Download photos
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 340
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -49,7 +49,7 @@ jobs:
 
       - name: Cache key
         id: key
-        run: echo "key=av-data-v1-pc${PER_CLASS}-${{ hashFiles('training/commons_types.csv', 'training/fetch_commons.py', 'training/av/data.py') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=av-data-v2-pc${PER_CLASS}-${{ hashFiles('training/commons_types.csv', 'training/fetch_commons.py', 'training/av/data.py') }}" >> "$GITHUB_OUTPUT"
 
       - name: Already downloaded?
         id: cached
@@ -82,7 +82,9 @@ jobs:
       - name: Wikimedia Commons photos
         if: steps.cached.outputs.cache-hit != 'true'
         run: |
-          (cd training && python fetch_commons.py --out ../data/commons --per-class "$PER_CLASS") 2>&1 | tee commons.log
+          # Stops starting new types after 4.5 h so the job always finishes and saves what it has.
+          (cd training && python fetch_commons.py --out ../data/commons --per-class "$PER_CLASS" --workers 5 --time-limit-min 270) 2>&1 | tee commons.log
+          grep "Time budget used" commons.log | while read -r line; do echo "::warning title=Commons download::$line"; done || true
           grep "Category not found" commons.log | while read -r line; do echo "::warning title=Commons category::$line"; done || true
           echo "::notice title=Photos::$(find data/commons -name '*.jpg' | wc -l) Wikimedia Commons photos downloaded"
 
