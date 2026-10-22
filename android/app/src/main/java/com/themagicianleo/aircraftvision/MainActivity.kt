@@ -511,7 +511,7 @@ private fun SheetContent(state: UiState, onRetake: () -> Unit, onCrop: (CropBox)
         when {
             state.error != null -> ErrorCard(state.error)
             state.busy || state.predictions.isEmpty() -> Searching()
-            else -> Results(state.predictions, state.inferenceMs)
+            else -> ResultDetails(state.predictions, state.inferenceMs)
         }
         if (!state.busy) {
             OutlinedButton(onClick = onRetake, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
@@ -537,128 +537,6 @@ private fun Searching() {
     Box(Modifier.fillMaxWidth(0.6f).height(34.dp).clip(RoundedCornerShape(10.dp)).background(skeleton))
     Box(Modifier.fillMaxWidth(0.4f).height(18.dp).clip(RoundedCornerShape(8.dp)).background(skeleton))
     repeat(3) { Box(Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp)).background(skeleton)) }
-}
-
-@Composable
-private fun Results(predictions: List<Prediction>, inferenceMs: Long?) {
-    val best = predictions.first()
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("BEST MATCH", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(best.label.name, style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (best.label.manufacturer.isNotBlank()) Pill(best.label.manufacturer, strong = true)
-                    if (best.label.family.isNotBlank() && best.label.family != best.label.name) Pill(best.label.family)
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            ConfidenceRing(best.confidence)
-        }
-        if (best.confidence < LOW_CONFIDENCE) {
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(painterResource(R.drawable.ic_info), null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "Not sure about this one. Get closer so the aircraft fills the brackets.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
-            }
-        }
-        if (predictions.size > 1) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Text("COULD ALSO BE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            predictions.drop(1).forEachIndexed { i, p -> AlternativeRow(rank = i + 2, prediction = p) }
-        }
-        inferenceMs?.let {
-            Text(
-                "Analysed on your phone in $it ms · no internet used",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun Pill(text: String, strong: Boolean = false) {
-    Surface(
-        shape = CircleShape,
-        color = if (strong) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (strong) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
-    }
-}
-
-@Composable
-private fun ConfidenceRing(confidence: Float, size: Dp = 88.dp) {
-    val animated = remember { Animatable(0f) }
-    LaunchedEffect(confidence) { animated.animateTo(confidence, tween(900)) }
-    val color = confidenceColor(confidence)
-    val track = MaterialTheme.colorScheme.surfaceVariant
-    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round)
-            drawArc(track, -90f, 360f, useCenter = false, style = stroke)
-            drawArc(color, -90f, 360f * animated.value, useCenter = false, style = stroke)
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("${(animated.value * 100).toInt()}%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("sure", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun AlternativeRow(rank: Int, prediction: Prediction) {
-    val animated = remember { Animatable(0f) }
-    LaunchedEffect(prediction) { animated.animateTo(prediction.confidence, tween(700, delayMillis = 100 * rank)) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.size(32.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("$rank", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(prediction.label.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Text(
-                    "${(prediction.confidence * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                listOf(prediction.label.manufacturer, prediction.label.family)
-                    .filter { it.isNotBlank() && it != prediction.label.name }.distinct().joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(animated.value.coerceIn(0.02f, 1f))
-                        .height(6.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                )
-            }
-        }
-    }
 }
 
 @Composable
@@ -724,4 +602,3 @@ private fun SupportedTypes(types: List<AircraftLabel>) {
     }
 }
 
-private const val LOW_CONFIDENCE = 0.4f
