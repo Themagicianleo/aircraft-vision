@@ -22,9 +22,13 @@ on:
         description: Quick end-to-end test (tiny run, draft release)
         type: boolean
         default: false
+      resume_from_run:
+        description: Continue from the checkpoint of an earlier run (its run ID), e.g. one that ran out of parts
+        default: ""
 
 permissions:
   contents: read
+  actions: read  # to fetch a checkpoint from an earlier run (resume_from_run)
 
 concurrency:
   group: train-model
@@ -112,6 +116,7 @@ jobs:
     with:
       chunk: 1
       data-key: ${{ needs.data.outputs.key }}
+      resume-run-id: ${{ inputs.resume_from_run }}
       time-limit: ${{ inputs.smoke && 0.1 || 320 }}
       train-args: ${{ inputs.smoke && '--epochs 2 --limit 300 --img-size 96 --batch-size 16 --workers 3' || format('--epochs {0} --img-size {1} --model {2} --batch-size 48 --workers 3 --eval-every 5', inputs.epochs, inputs.img_size, inputs.model) }}
 

@@ -18,6 +18,10 @@ on:
         description: minutes of training before saving and handing over to the next slice
         type: number
         default: 320
+      resume-run-id:
+        description: take the starting checkpoint from this earlier run instead of the current one
+        type: string
+        default: ""
 
 defaults:
   run:
@@ -32,11 +36,22 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Get checkpoint from the previous part
+        if: inputs.resume-run-id == ''
         uses: actions/download-artifact@v4
         continue-on-error: true  # the first part has none
         with:
           name: checkpoint
           path: run
+
+      - name: Get checkpoint from an earlier run
+        if: inputs.resume-run-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint
+          path: run
+          run-id: ${{ inputs.resume-run-id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
 
       - name: Check whether training already finished
         id: status
