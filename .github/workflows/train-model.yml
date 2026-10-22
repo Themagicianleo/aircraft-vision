@@ -85,7 +85,9 @@ jobs:
           # Stops starting new types after 4.5 h so the job always finishes and saves what it has.
           (cd training && python fetch_commons.py --out ../data/commons --per-class "$PER_CLASS" --workers 5 --time-limit-min 270) 2>&1 | tee commons.log
           grep "Time budget used" commons.log | while read -r line; do echo "::warning title=Commons download::$line"; done || true
-          grep "Category not found" commons.log | while read -r line; do echo "::warning title=Commons category::$line"; done || true
+          # One annotation listing every missing category (GitHub shows at most 10 annotations per step).
+          missing=$(grep "Category not found" commons.log || true)
+          [ -n "$missing" ] && echo "::warning title=Commons categories not found ($(echo "$missing" | wc -l))::$(echo "$missing" | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
           echo "::notice title=Photos::$(find data/commons -name '*.jpg' | wc -l) Wikimedia Commons photos downloaded"
 
       - name: Store photos for the training parts
