@@ -44,6 +44,8 @@ def parse_args():
     p.add_argument("--warmup-epochs", type=int, default=2)
     p.add_argument("--label-smoothing", type=float, default=0.1)
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--threads", type=int, default=0,
+                   help="CPU threads for the model (0 = all); leave one free on shared CI machines")
     p.add_argument("--limit", type=int, default=0, help="debug: cap train/val items")
     p.add_argument("--out", default="runs/exp")
     p.add_argument("--resume", action="store_true", help="continue from <out>/last.pt")
@@ -96,16 +98,19 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.threads:
+        torch.set_num_threads(args.threads)
 
     bundle = build_data(args)
     print(f"{len(bundle.classes)} classes | {len(bundle.train)} train | {len(bundle.val)} val | device={device}")
 
     model = create_model(args.model, len(bundle.classes), pretrained=not args.no_pretrained).to(device)
     mean, std = norm_stats(model)
-    loader_kw = dict(batch_size=args.batch_size, num_workers=args.workers, pin_memory=device.type == "cuda",
-                     persistent_workers=args.workers > 0)
+    loader_kw = dict(batch_size=args.batch_size, num_workers=args.workers, pin_memory=device.type == "cuda")
     train_dl = DataLoader(ItemDataset(bundle.train, train_transform(args.img_size, mean, std)),
-                          shuffle=True, drop_last=len(bundle.train) > args.batch_size, **loader_kw)
+                          shuffle=True, drop_last=len(bundle.train) > args.batch_size,
+                          persistent_workers=args.workers > 0, **loader_kw)
+    # Not persistent: evaluation is occasional, and idle extra worker processes cost memory.
     val_dl = DataLoader(ItemDataset(bundle.val, eval_transform(args.img_size, mean, std)), **loader_kw)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
