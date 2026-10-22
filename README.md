@@ -103,9 +103,27 @@ The app lets you take a photo or pick one from the gallery, or share a photo to 
 
 Every push that touches `android/` is also built by GitHub Actions. The APK is attached to the run under **Actions → Android APK → Artifacts**. To ship the model in those builds, commit the two files in `assets/`.
 
-## 3. iOS (later)
+## 3. iPhone app
 
-Use the `onnxruntime-objc` / `onnxruntime-c` package (CocoaPods or Swift Package Manager). Load `aircraft.onnx` and preprocess the same way: scale the short side to `img_size`, centre-crop, then RGB planar floats in [0,1]. Read the class list from `labels.json`. `AircraftClassifier.kt` is the reference to port.
+`ios/` is a SwiftUI app with the same features, using the same `aircraft.onnx` through ONNX Runtime.
+GitHub Actions builds it on macOS (`.github/workflows/ios.yml`) and attaches **AircraftVision.ipa**
+to the latest release, so no Mac is needed.
+
+The App Store and TestFlight need a paid Apple Developer account ($99/year). Without one, you can
+install the .ipa with a **free Apple ID** using [Sideloadly](https://sideloadly.io) on Windows or macOS.
+Apps installed this way **stop opening after 7 days** until you install them again; that is Apple's
+rule for free accounts.
+
+1. Download `AircraftVision.ipa` from the [latest release](https://github.com/Themagicianleo/aircraft-vision/releases/latest).
+2. On Windows, install iTunes and iCloud from apple.com (not the Microsoft Store versions). Then install Sideloadly.
+3. Plug the iPhone in by cable and tap **Trust** on the phone.
+4. Drag the .ipa into Sideloadly, enter your Apple ID and press **Start**.
+5. On the iPhone: **Settings → General → VPN & Device Management →** your Apple ID **→ Trust**,
+   then **Settings → Privacy & Security → Developer Mode → On** (the phone restarts).
+6. Every 7 days, plug in and press **Start** in Sideloadly again.
+
+With a Mac and Xcode you can also build it yourself: `cd ios && brew install xcodegen && xcodegen generate`,
+put `aircraft.onnx` and `labels.json` in `ios/Model/`, open the project, pick your Apple ID team and run.
 
 ## Tips for accuracy
 

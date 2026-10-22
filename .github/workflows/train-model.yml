@@ -193,6 +193,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write  # to create the release
+      actions: write   # to start the iPhone build for it
     steps:
       - uses: actions/checkout@v4
 
@@ -290,6 +291,12 @@ jobs:
             --title "Aircraft Vision (model #${{ github.run_number }})" --notes-file release_notes.md \
             ${{ inputs.smoke && '--draft' || '--latest' }}
           echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag"
+
+      - name: Build the iPhone app for this release too
+        if: ${{ !inputs.smoke }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ios.yml --repo "$GITHUB_REPOSITORY" --ref main
 
       - name: Report error
         if: failure()
