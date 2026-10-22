@@ -1,4 +1,4 @@
-// Aircraft Vision web app: same flow as the phone apps. Live camera -> freeze a frame (or pick a
+// Spotter web app: same flow as the phone apps. Live camera -> freeze a frame (or pick a
 // photo) -> resizable box -> the model identifies what's inside the box, all in the browser.
 import { drawBrackets, drawPlanform } from "./draw.js";
 import { BODY, enginesText, specsFor } from "./specs.js";

@@ -64,13 +64,13 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/AircraftVision.app Payload/
-          zip -qry AircraftVision.ipa Payload
-          ls -la AircraftVision.ipa
+          zip -qry Spotter.ipa Payload
+          ls -la Spotter.ipa
 
       - uses: actions/upload-artifact@v4
         with:
           name: aircraft-vision-ipa
-          path: ios/AircraftVision.ipa
+          path: ios/Spotter.ipa
 
       - name: Attach to the release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -78,5 +78,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.model.outputs.tag }}
         run: |
-          gh release upload "$TAG" AircraftVision.ipa --repo "$GITHUB_REPOSITORY" --clobber
-          echo "::notice title=Attached::AircraftVision.ipa -> ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+          gh release upload "$TAG" Spotter.ipa --repo "$GITHUB_REPOSITORY" --clobber
+          echo "::notice title=Attached::Spotter.ipa -> ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"

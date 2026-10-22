@@ -1,4 +1,4 @@
-# Aircraft Vision
+# Spotter · aircraft ID
 
 Identify an aircraft's type from a photo, entirely on the phone with no server and no internet.
 
@@ -116,7 +116,7 @@ One-time setup: in the repo's **Settings → Pages**, set **Source** to **GitHub
 ## 4. iPhone app
 
 `ios/` is a SwiftUI app with the same features, using the same `aircraft.onnx` through ONNX Runtime.
-GitHub Actions builds it on macOS (`.github/workflows/ios.yml`) and attaches **AircraftVision.ipa**
+GitHub Actions builds it on macOS (`.github/workflows/ios.yml`) and attaches **Spotter.ipa**
 to the latest release, so no Mac is needed.
 
 The App Store and TestFlight need a paid Apple Developer account ($99/year). Without one, you can
@@ -124,7 +124,7 @@ install the .ipa with a **free Apple ID** using [Sideloadly](https://sideloadly.
 Apps installed this way **stop opening after 7 days** until you install them again; that is Apple's
 rule for free accounts.
 
-1. Download `AircraftVision.ipa` from the [latest release](https://github.com/Themagicianleo/aircraft-vision/releases/latest).
+1. Download `Spotter.ipa` from the [latest release](https://github.com/Themagicianleo/aircraft-vision/releases/latest).
 2. On Windows, install iTunes and iCloud from apple.com (not the Microsoft Store versions). Then install Sideloadly.
 3. Plug the iPhone in by cable and tap **Trust** on the phone.
 4. Drag the .ipa into Sideloadly, enter your Apple ID and press **Start**.

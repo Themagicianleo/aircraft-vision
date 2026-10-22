@@ -224,7 +224,7 @@ private fun CameraScreen(error: String?, onCapture: (Bitmap) -> Unit, onGallery:
             Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(R.drawable.ic_flight), null, tint = Color.White, modifier = Modifier.size(20.dp).rotate(45f))
                 Spacer(Modifier.width(8.dp))
-                Text("Aircraft Vision", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Spotter", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.SemiBold)
             }
             GlassIconButton(R.drawable.ic_list, "Aircraft it knows", onClick = onShowTypes)
         }

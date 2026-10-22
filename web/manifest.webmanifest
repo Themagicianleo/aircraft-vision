@@ -1,6 +1,6 @@
 {
-  "name": "Aircraft Vision",
-  "short_name": "Aircraft",
+  "name": "Spotter · Aircraft ID",
+  "short_name": "Spotter",
   "description": "Identify aircraft from a photo, on your phone.",
   "start_url": "./",
   "scope": "./",

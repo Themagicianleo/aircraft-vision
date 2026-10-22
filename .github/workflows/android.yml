@@ -67,16 +67,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MODEL_TAG: ${{ steps.model.outputs.tag }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk AircraftVision.apk
+          cp app/build/outputs/apk/debug/app-debug.apk Spotter.apk
           {
             echo "App update built from \`${GITHUB_SHA::7}\` with the model from **$MODEL_TAG**."
             echo
             gh release view "$MODEL_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body | sed '/^## Install on Android/,/^## /{/^## This model/!d}'
           } > notes.md
-          sed -i '1i ## Install on Android\n1. On your phone, tap **AircraftVision.apk** below to download it.\n2. Open the downloaded file. If Android asks, allow installing apps from your browser.\n3. If it says the app can'"'"'t be installed over an existing one, uninstall the old Aircraft Vision first.\n' notes.md
-          gh release create "app-${{ github.run_number }}" AircraftVision.apk /tmp/model/aircraft_model.zip \
+          sed -i '1i ## Install on Android\n1. On your phone, tap **Spotter.apk** below to download it.\n2. Open the downloaded file. If Android asks, allow installing apps from your browser.\n3. If it says the app can'"'"'t be installed over an existing one, uninstall the old version first.\n' notes.md
+          gh release create "app-${{ github.run_number }}" Spotter.apk /tmp/model/aircraft_model.zip \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
-            --title "Aircraft Vision app #${{ github.run_number }}" --notes-file notes.md
+            --title "Spotter app #${{ github.run_number }}" --notes-file notes.md
           echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/app-${{ github.run_number }}"
 
       - name: Build the iPhone app and refresh the web app for this release too

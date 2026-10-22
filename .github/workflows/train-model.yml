@@ -246,9 +246,9 @@ jobs:
           labels = json.load(open("exported/labels.json"))
           names = sorted(c["name"] for c in labels["classes"])
           notes = f"""## Install on Android
-          1. On your phone, tap **AircraftVision.apk** below to download it.
+          1. On your phone, tap **Spotter.apk** below to download it.
           2. Open the downloaded file. If Android asks, allow installing apps from your browser.
-          3. If it says the app can't be installed over an existing one, uninstall the old Aircraft Vision first.
+          3. If it says the app can't be installed over an existing one, uninstall the old version first.
 
           ## This model
           - Recognises **{len(names)} aircraft types**
@@ -285,10 +285,10 @@ jobs:
           cp android/app/src/main/assets/aircraft.onnx android/app/src/main/assets/labels.json pkg/
           [ -f data/commons/CREDITS.csv ] && cp data/commons/CREDITS.csv pkg/PHOTO_CREDITS.csv
           (cd pkg && zip -q ../aircraft_model.zip *)
-          cp android/app/build/outputs/apk/debug/app-debug.apk AircraftVision.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk Spotter.apk
           tag="model-${{ github.run_number }}${{ inputs.smoke && '-smoke' || '' }}"
-          gh release create "$tag" AircraftVision.apk aircraft_model.zip --target "$GITHUB_SHA" \
-            --title "Aircraft Vision (model #${{ github.run_number }})" --notes-file release_notes.md \
+          gh release create "$tag" Spotter.apk aircraft_model.zip --target "$GITHUB_SHA" \
+            --title "Spotter (model #${{ github.run_number }})" --notes-file release_notes.md \
             ${{ inputs.smoke && '--draft' || '--latest' }}
           echo "::notice title=Released::${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag"
 

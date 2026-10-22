@@ -24,7 +24,7 @@ targets:
     info:
       path: AircraftVision/Info.plist
       properties:
-        CFBundleDisplayName: Aircraft Vision
+        CFBundleDisplayName: Spotter
         NSCameraUsageDescription: Point your camera at an aircraft to identify it. Photos never leave your phone.
         UILaunchScreen:
           UIColorName: ""

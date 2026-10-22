@@ -164,7 +164,7 @@ struct CameraScreen: View {
                 .opacity(authorized ? 1 : 0.4)
                 .disabled(!authorized)
             Spacer()
-            Label("Aircraft Vision", systemImage: "airplane")
+            Label("Spotter", systemImage: "airplane")
                 .font(.headline)
                 .foregroundStyle(.white)
             Spacer()
